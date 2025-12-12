@@ -425,7 +425,7 @@ onMounted(() => {
     
     // 初始化热键
     window.api.send('update-global-hotkey', settings.globalHotkey);
-    window.api.send('update-smart-hotkeys', smartHotkeys);
+    window.api.send('update-smart-hotkeys', JSON.parse(JSON.stringify(smartHotkeys)));
     window.api.send('secret-action', { action: 'list' });
   }
 });

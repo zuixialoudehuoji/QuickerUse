@@ -2,7 +2,7 @@
 import { app, BrowserWindow, globalShortcut, ipcMain, screen, clipboard, shell, Tray, Menu, nativeImage } from 'electron'
 import { join } from 'path'
 import { spawn } from 'child_process' 
-import fs from 'fs' // [新增]
+import fs from 'fs' 
 import systemTools from './systemTools' 
 import scriptManager from './scriptManager' 
 import fileServer from './fileServer' 
@@ -14,19 +14,19 @@ let tray = null
 let isAppDisabled = false
 let globalHotkey = 'Alt+Space'
 let mouseHookProc = null 
+let normalIconImage = null
+let disabledIconImage = null
 
 // 开发模式判断
 const isDev = process.env.NODE_ENV === 'development'
 
 // 资源路径
-const iconPath = join(__dirname, '../../resources/icon.png');
-const disabledIconPath = join(__dirname, '../../resources/icon-disabled.png');
 const mouseHookPath = join(__dirname, '../../resources/MouseHook.exe');
 
 function updateTrayIcon() {
-  if (tray) {
-    const icon = isAppDisabled ? disabledIconPath : iconPath;
-    tray.setImage(nativeImage.createFromPath(icon));
+  if (tray && normalIconImage && disabledIconImage) {
+    const icon = isAppDisabled ? disabledIconImage : normalIconImage;
+    tray.setImage(icon);
     tray.setToolTip(isAppDisabled ? 'QuickerUse (已禁用)' : 'QuickerUse');
   }
 }
@@ -126,7 +126,8 @@ async function createWindow() {
     backgroundColor: '#1e1e1e',
     resizable: false,
     skipTaskbar: false, 
-    show: false, // [修改] 默认隐藏(托盘启动)
+    show: false, // 默认隐藏(托盘启动)
+    icon: normalIconImage, // 显式设置窗口图标
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
@@ -135,7 +136,7 @@ async function createWindow() {
     }
   })
 
-  // [修复] 忽略证书错误
+  // 忽略证书错误
   app.commandLine.appendSwitch('ignore-certificate-errors');
   mainWindow.webContents.on('certificate-error', (event, url, error, certificate, callback) => {
     event.preventDefault();
@@ -155,7 +156,7 @@ async function createWindow() {
 
   // 窗口准备好时
   mainWindow.on('ready-to-show', () => {
-    // mainWindow.show() // [修改] 不再自动显示
+    // mainWindow.show() // 不再自动显示
   })
 
   // === IPC 处理逻辑 ===
@@ -239,75 +240,122 @@ async function createWindow() {
   ipcMain.on('hide-window', () => mainWindow.hide());
 }
 
-// Electron应用准备就绪
-app.whenReady().then(() => {
-  createWindow()
-
-  // [修改] 确保图标路径在生产环境正确
-  const iconsDir = path.join(app.getPath('userData'), 'icons');
-  if (!fs.existsSync(iconsDir)) {
-    fs.mkdirSync(iconsDir, { recursive: true });
-  }
-
-  // 绿色圆点 (正常) Base64
-  const normalIconBase64 = 'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABTSURBVDhP7YxBCgAgDMX8/6d7u3QJItok5iF4zdq2/7M25mDOzLw7iJiglEDvQG+CUgK9A70JSgn0DvQmKCXQO9CboJRA70BvglICvQO9CcoaG9cKAuQYl/JmAAAAAElFTkSuQmCC';
-  // 灰色圆点 (禁用) Base64
-  const disabledIconBase64 = 'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABTSURBVDhP7YxBCgAgDMPh/0/3dokaRJSF5iF4zdq2/7M25mDOzLw7iJiglEDvQG+CUgK9A70JSgn0DvQmKCXQO9CboJRA70BvglICvQO9CcoaG9cK8+Iq+1oAAAAASUVORK5CYII=';
-
-  fs.writeFileSync(path.join(iconsDir, 'icon.png'), Buffer.from(normalIconBase64, 'base64'));
-  fs.writeFileSync(path.join(iconsDir, 'icon-disabled.png'), Buffer.from(disabledIconBase64, 'base64'));
-
-  iconPath = path.join(iconsDir, 'icon.png');
-  disabledIconPath = path.join(iconsDir, 'icon-disabled.png');
-
-  // 托盘图标
-  tray = new Tray(nativeImage.createFromPath(iconPath));
-  tray.setToolTip('QuickerUse');
-  
-  const contextMenu = Menu.buildFromTemplate([
-    { label: '退出', click: () => app.quit() }
-  ]);
-  tray.setContextMenu(contextMenu);
-
-  tray.on('double-click', () => {
-    isAppDisabled = !isAppDisabled;
-    updateTrayIcon();
-    console.log(`App ${isAppDisabled ? 'Disabled' : 'Enabled'}`);
+// 单例锁
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    }
   });
 
-  registerGlobalShortcut(globalHotkey);
-
-  // 启动鼠标中键监听
-  try {
-    console.log('Starting MouseHook:', mouseHookPath);
-    mouseHookProc = spawn(mouseHookPath);
+  // Electron应用准备就绪
+  app.whenReady().then(() => {
     
-    mouseHookProc.stdout.on('data', (data) => {
-      const msg = data.toString().trim();
-      if (msg.includes('MIDDLE_CLICK')) {
-        console.log('Middle Click Detected');
-        activateApp();
+    // 1. 定义资源路径 (针对开发环境和生产环境可能不同，这里尝试从项目根目录找)
+    // 注意：__dirname 在 dist-electron/main 中
+    const projectRoot = join(__dirname, '../../'); 
+    const resourceIconPath = join(projectRoot, 'resources/icon.png');
+    const resourceDisabledPath = join(projectRoot, 'resources/icon-disabled.png');
+
+    console.log('[Main] Project Root inferred as:', projectRoot);
+    console.log('[Main] Looking for icon at:', resourceIconPath);
+
+    // 2. 准备兜底图标 (32x32 红色方块) - 确保绝对可用
+    const fallbackIconDataUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABISURBVFhH7coxDQAACAOg9A/iFuuCB0zC2ZqZt9/Z+wUABQAFAAUABQAFAAUABQAFAAUABQAFAAUABQAFAAUABQAFAAUABQAFwFyGngX1090KyAAAAABJRU5ErkJggg==';
+    
+    // 3. 加载图标逻辑
+    try {
+      if (fs.existsSync(resourceIconPath)) {
+        console.log('[Main] File exists. Loading...');
+        normalIconImage = nativeImage.createFromPath(resourceIconPath);
+        
+        if (normalIconImage.isEmpty()) {
+           console.error('[Main] ERROR: Icon file exists but loaded image is EMPTY!');
+           normalIconImage = nativeImage.createFromDataURL(fallbackIconDataUrl);
+        } else {
+           console.log('[Main] Icon loaded successfully. Size:', normalIconImage.getSize());
+        }
+      } else {
+        console.error('[Main] ERROR: Icon file NOT found at:', resourceIconPath);
+        normalIconImage = nativeImage.createFromDataURL(fallbackIconDataUrl);
       }
-    });
+      
+      // 加载禁用图标 (类似逻辑)
+      if (fs.existsSync(resourceDisabledPath)) {
+        disabledIconImage = nativeImage.createFromPath(resourceDisabledPath);
+      }
+      if (!disabledIconImage || disabledIconImage.isEmpty()) {
+        disabledIconImage = nativeImage.createFromDataURL(fallbackIconDataUrl);
+      }
 
-    mouseHookProc.on('error', (err) => {
-      console.error('MouseHook Error:', err);
-    });
-    
-    mouseHookProc.on('close', (code) => {
-       console.log('MouseHook exited with code:', code);
-    });
-
-  } catch (e) {
-    console.error('Failed to start MouseHook:', e);
-  }
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow()
+    } catch (e) {
+      console.error('[Main] EXCEPTION during icon load:', e);
+      normalIconImage = nativeImage.createFromDataURL(fallbackIconDataUrl);
     }
+
+    // 4. 创建窗口 (此时 normalIconImage 一定有值)
+    createWindow()
+
+    // 5. 创建托盘
+    try {
+        tray = new Tray(normalIconImage);
+        tray.setToolTip('QuickerUse');
+        
+        const contextMenu = Menu.buildFromTemplate([
+          { label: '退出', click: () => app.quit() }
+        ]);
+        tray.setContextMenu(contextMenu);
+
+        tray.on('double-click', () => {
+          isAppDisabled = !isAppDisabled;
+          updateTrayIcon();
+          console.log(`App ${isAppDisabled ? 'Disabled' : 'Enabled'}`);
+        });
+        
+        console.log('[Main] Tray created successfully');
+    } catch (err) {
+        console.error('[Main] FAILED to create Tray:', err);
+    }
+
+    registerGlobalShortcut(globalHotkey);
+
+    // 启动鼠标中键监听
+    try {
+      console.log('Starting MouseHook:', mouseHookPath);
+      mouseHookProc = spawn(mouseHookPath);
+      
+      mouseHookProc.stdout.on('data', (data) => {
+        const msg = data.toString().trim();
+        if (msg.includes('MIDDLE_CLICK')) {
+          console.log('Middle Click Detected');
+          activateApp();
+        }
+      });
+
+      mouseHookProc.on('error', (err) => {
+        console.error('MouseHook Error:', err);
+      });
+      
+      mouseHookProc.on('close', (code) => {
+         console.log('MouseHook exited with code:', code);
+      });
+
+    } catch (e) {
+      console.error('Failed to start MouseHook:', e);
+    }
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createWindow()
+      }
+    })
   })
-})
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
