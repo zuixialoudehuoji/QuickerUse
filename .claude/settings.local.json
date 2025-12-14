@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd:*)",
+      "Bash(dir /s /b)",
+      "Bash(node create_icons.js:*)",
+      "Bash(npm run dev)",
+      "Bash(taskkill:*)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(powershell -Command:*)"
+    ]
+  }
+}

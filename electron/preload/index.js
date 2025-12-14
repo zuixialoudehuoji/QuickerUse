@@ -33,7 +33,7 @@ contextBridge.exposeInMainWorld('api', {
    */
   on: (channel, listener) => {
     // 确保只监听允许的通道，增加安全性
-    const validChannels = ['main-process-message', 'clipboard-data', 'window-pinned', 'script-list', 'file-server-url', 'secret-status', 'secret-op-result', 'secret-value', 'secret-list', 'trigger-smart-action']; 
+    const validChannels = ['main-process-message', 'clipboard-data', 'window-pinned', 'script-list', 'file-server-url', 'secret-status', 'secret-op-result', 'secret-value', 'secret-list', 'trigger-smart-action', 'config-data', 'file-icon-data']; 
     if (validChannels.includes(channel)) {
       ipcRenderer.on(channel, (event, ...args) => listener(...args));
     }
@@ -45,7 +45,7 @@ contextBridge.exposeInMainWorld('api', {
    * @param {Function} listener - 监听回调函数
    */
   once: (channel, listener) => {
-    const validChannels = ['main-process-message'];
+    const validChannels = ['main-process-message', 'file-icon-data'];
     if (validChannels.includes(channel)) {
       ipcRenderer.once(channel, (event, ...args) => listener(...args));
     }
@@ -57,7 +57,7 @@ contextBridge.exposeInMainWorld('api', {
    * @param {...any} args - 传递给主进程的参数
    */
   send: (channel, ...args) => {
-    const validChannels = ['to-main-process', 'hide-window', 'show-window', 'minimize-window', 'close-window', 'system-action', 'window-control', 'set-window-size', 'script-action', 'file-server-action', 'secret-action', 'open-image-window', 'run-path', 'update-global-hotkey', 'update-smart-hotkeys']; // 允许渲染进程发送消息的通道
+    const validChannels = ['to-main-process', 'hide-window', 'show-window', 'minimize-window', 'close-window', 'system-action', 'window-control', 'set-window-size', 'script-action', 'file-server-action', 'secret-action', 'open-image-window', 'run-path', 'update-global-hotkey', 'update-smart-hotkeys', 'config-action', 'get-file-icon']; // 允许渲染进程发送消息的通道
     if (validChannels.includes(channel)) {
       ipcRenderer.send(channel, ...args);
     }

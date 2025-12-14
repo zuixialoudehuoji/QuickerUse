@@ -5,16 +5,17 @@
   "main": "dist-electron/main/index.js",
   "description": "A minimalist, mouse-first efficiency tool for Windows & Mac.",
   "scripts": {
-    "dev": "vite",
+    "dev": "chcp 65001 && vite",
     "build": "vite build && electron-builder",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@element-plus/icons-vue": "^2.3.1",
     "element-plus": "^2.4.4",
+    "iconv-lite": "^0.7.1",
     "lowdb": "^7.0.1",
     "pinia": "^2.1.7",
-    "vue": "^3.3.11",
-    "@element-plus/icons-vue": "^2.3.1"
+    "vue": "^3.3.11"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^4.5.2",

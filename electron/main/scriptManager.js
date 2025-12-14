@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { app } from 'electron';
 import { exec } from 'child_process';
+import iconv from 'iconv-lite';
 
 // 默认脚本目录: 用户文档/QuickerUse/scripts
 // const SCRIPT_DIR = path.join(app.getPath('documents'), 'QuickerUse', 'scripts'); // [修复] 移除顶层调用
@@ -74,15 +75,21 @@ export default {
     }
 
     // 执行
-    exec(command, (error, stdout, stderr) => {
+    exec(command, { encoding: 'buffer' }, (error, stdout, stderr) => {
       if (error) {
+        const errorMsg = iconv.decode(stderr || stdout, 'cp936');
         console.error(`执行脚本出错: ${error.message}`);
+        console.error(`详细错误: ${errorMsg}`);
         return;
       }
-      if (stderr) {
-        console.error(`脚本输出错误: ${stderr}`);
+      
+      const outStr = iconv.decode(stdout, 'cp936');
+      const errStr = iconv.decode(stderr, 'cp936');
+
+      if (errStr) {
+        console.error(`脚本输出错误: ${errStr}`);
       }
-      console.log(`脚本输出: ${stdout}`);
+      console.log(`脚本输出: ${outStr}`);
     });
 
     return { success: true, message: '脚本已启动' };

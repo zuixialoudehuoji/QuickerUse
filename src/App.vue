@@ -46,7 +46,10 @@
           @contextmenu.prevent="item.type === 'action' && handleGridRightClick(item, 'custom')"
           :title="getItemTitle(item)"
         >
-          <span v-if="item.type === 'action'" class="icon">{{ item.data.icon || '📦' }}</span>
+          <span v-if="item.type === 'action'" class="icon">
+            <img v-if="item.data.icon && item.data.icon.startsWith('data:')" :src="item.data.icon" style="width: 32px; height: 32px; object-fit: contain;">
+            <span v-else>{{ item.data.icon || '📦' }}</span>
+          </span>
           <span v-if="item.type === 'add'" class="icon">➕</span>
         </div>
       </div>
@@ -82,6 +85,10 @@
         <div class="form-row">
           <label>全局热键</label>
           <input v-model.lazy="settings.globalHotkey" @change="saveSettings" placeholder="例如 Alt+Space" style="width: 120px; text-align: right; background: rgba(0,0,0,0.2); border: 1px solid #444; color: inherit;">
+        </div>
+        <div class="form-row">
+          <label>启动后最小化到托盘</label>
+          <input type="checkbox" v-model="startMinimized" @change="updateStartMinimized" style="width: 20px; height: 20px;">
         </div>
         <div class="form-row">
           <label>主题</label>
@@ -138,12 +145,40 @@
         <div v-if="addType==='file'" class="form-body">
           <input v-model="newItem.path" placeholder="文件路径 (支持拖入)" class="full-input">
           <input v-model="newItem.label" placeholder="名称" class="full-input">
-          <input v-model="newItem.icon" placeholder="图标 (Emoji)" class="full-input" style="width: 60px">
+          <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 10px;">
+             <input v-model="newItem.icon" @dblclick="showIconPicker = true" placeholder="图标" class="full-input" style="width: 60px; margin-bottom: 0;">
+             <div style="width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: rgba(255,255,255,0.05); border-radius: 4px;">
+                <img v-if="newItem.icon && newItem.icon.startsWith('data:')" :src="newItem.icon" style="width: 24px; height: 24px; object-fit: contain;">
+                <span v-else style="font-size: 20px;">{{ newItem.icon || '📦' }}</span>
+             </div>
+             <label style="display: flex; align-items: center; gap: 5px; cursor: pointer; white-space: nowrap;">
+               <input type="checkbox" v-model="newItem.isAdmin"> 管理员运行
+             </label>
+          </div>
           <button class="confirm-btn" @click="confirmAdd">添加</button>
         </div>
         <div v-if="addType==='builtin'" class="grid-select">
           <div v-for="tool in BUILTIN_TOOLS" :key="tool.action" class="tool-option" @click="selectBuiltin(tool)">
             {{ tool.icon }} {{ tool.label }}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 弹窗：图标选择器 -->
+    <div v-if="showIconPicker" class="modal-overlay" @click.self="showIconPicker = false" style="z-index: 110;">
+      <div class="modal-content" style="width: 70%; max-height: 80%;">
+        <h3>选择图标</h3>
+        <div class="icon-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(45px, 1fr)); gap: 8px;">
+          <div 
+            v-for="(icon, idx) in ICON_LIBRARY" 
+            :key="idx" 
+            @click="selectIcon(icon.svg)"
+            style="aspect-ratio: 1; border: 1px solid var(--grid-line); display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: pointer; background: rgba(255,255,255,0.05); border-radius: 4px;"
+            :title="icon.name"
+          >
+            <div style="width: 24px; height: 24px; color: inherit; display:flex; align-items:center; justify-content:center;" v-html="icon.svg"></div>
+            <span style="font-size: 9px; margin-top: 4px; opacity: 0.7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%;">{{ icon.name }}</span>
           </div>
         </div>
       </div>
@@ -176,6 +211,7 @@
 <script setup>
 import { ref, computed, onMounted, reactive, watch } from 'vue';
 import textProcessor from './utils/textProcessor';
+import { ICON_LIBRARY } from './utils/iconLibrary';
 
 // === 1. 常量定义 ===
 const ALL_FEATURES = [
@@ -227,6 +263,8 @@ const showSettings = ref(false);
 const showAddModal = ref(false);
 const showAllSmart = ref(false);
 const showSecretManager = ref(false);
+const showIconPicker = ref(false);
+const startMinimized = ref(true);
 
 // 表单数据
 const addType = ref('file');
@@ -340,12 +378,87 @@ const performAction = (item) => {
 const performCustomAction = (item) => {
   if (item.type === 'builtin') performAction({ action: item.action });
   else if (item.type === 'file') {
-    window.api.send('run-path', item.path);
+    window.api.send('run-path', { path: item.path, isAdmin: item.isAdmin });
     window.api.send('hide-window');
   }
 };
 
-// ...
+const hideSmartAction = (action) => {
+  const key = typeof action === 'string' ? action : action.action;
+  smartBlacklist.value.add(key);
+  saveData();
+};
+
+const restoreSmartAction = (actionKey) => {
+  smartBlacklist.value.delete(actionKey);
+  saveData();
+};
+
+const removeCustomAction = (index) => {
+  if (confirm('确定删除此工具?')) {
+    customActions.value.splice(index, 1);
+    saveData();
+  }
+};
+
+const selectBuiltin = (tool) => {
+  customActions.value.push({
+    type: 'builtin',
+    label: tool.label,
+    action: tool.action,
+    icon: tool.icon
+  });
+  showAddModal.value = false;
+  saveData();
+};
+
+const confirmAdd = () => {
+  if (!newItem.path || !newItem.label) return;
+  customActions.value.push({
+    type: 'file',
+    label: newItem.label,
+    path: newItem.path,
+    icon: newItem.icon,
+    isAdmin: newItem.isAdmin || false
+  });
+  // Reset
+  newItem.path = '';
+  newItem.label = '';
+  newItem.icon = '📦';
+  newItem.isAdmin = false;
+  showAddModal.value = false;
+  saveData();
+};
+
+const handleDrop = (e) => {
+  e.preventDefault();
+  if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+    const file = e.dataTransfer.files[0];
+    const filePath = file.path;
+    addType.value = 'file';
+    newItem.path = filePath;
+    newItem.label = file.name.replace(/\.(exe|lnk|app)$/i, '');
+    newItem.isAdmin = false;
+    
+    if (window.api) {
+        window.api.send('get-file-icon', filePath);
+        window.api.once('file-icon-data', (data) => {
+            if (data && data.path === newItem.path && data.icon) {
+                newItem.icon = data.icon;
+            }
+        });
+    }
+
+    showAddModal.value = true;
+  }
+};
+
+const selectIcon = (svgContent) => {
+  // Convert SVG to Base64 Data URI
+  const base64 = btoa(unescape(encodeURIComponent(svgContent)));
+  newItem.icon = `data:image/svg+xml;base64,${base64}`;
+  showIconPicker.value = false;
+};
 
 const saveData = () => {
   localStorage.setItem('smart-blacklist', JSON.stringify([...smartBlacklist.value]));
@@ -363,7 +476,11 @@ const saveData = () => {
   
   };
   
-  const applySettings = () => {
+  const updateStartMinimized = () => {
+  if (window.api) window.api.send('config-action', { action: 'set', key: 'startMinimized', value: startMinimized.value });
+};
+
+const applySettings = () => {
   saveData();
   // [修复] 强制应用主题到 html 标签
   document.documentElement.setAttribute('data-theme', settings.theme);
@@ -389,12 +506,13 @@ onMounted(() => {
   // ESC 退出
   document.addEventListener('keyup', (e) => {
     if (e.key === 'Escape') {
-      if (showSettings.value || showAllSmart.value || showAddModal.value || showSecretManager.value) {
+      if (showSettings.value || showAllSmart.value || showAddModal.value || showSecretManager.value || showIconPicker.value) {
         // 如果有弹窗，先关弹窗
         showSettings.value = false;
         showAllSmart.value = false;
         showAddModal.value = false;
         showSecretManager.value = false;
+        showIconPicker.value = false;
       } else {
         // 没弹窗则隐藏主窗口
         window.api.send('hide-window');
@@ -411,6 +529,10 @@ onMounted(() => {
 
   if (window.api) {
     window.api.on('clipboard-data', (text) => clipboardContent.value = text);
+    window.api.on('config-data', (data) => {
+        if (data.startMinimized !== undefined) startMinimized.value = data.startMinimized;
+        else if (data.key === 'startMinimized') startMinimized.value = data.value;
+    });
     window.api.on('secret-list', (k) => secretKeys.value = k);
     window.api.on('secret-value', ({value}) => { if(value) { navigator.clipboard.writeText(value); alert('已复制'); } });
     window.api.on('secret-op-result', () => window.api.send('secret-action', { action: 'list' }));
@@ -427,6 +549,7 @@ onMounted(() => {
     window.api.send('update-global-hotkey', settings.globalHotkey);
     window.api.send('update-smart-hotkeys', JSON.parse(JSON.stringify(smartHotkeys)));
     window.api.send('secret-action', { action: 'list' });
+    window.api.send('config-action', { action: 'get', key: 'startMinimized' });
   }
 });
 </script>
@@ -435,7 +558,7 @@ onMounted(() => {
 /* 变量已移至 assets/main.css 全局定义 */
 
 .quicker-use-app {
-  height: 100vh;
+  height: 96vh;
   background: var(--bg-color);
   color: var(--text-color);
   font-family: sans-serif;

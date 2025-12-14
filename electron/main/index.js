@@ -7,6 +7,7 @@ import systemTools from './systemTools'
 import scriptManager from './scriptManager' 
 import fileServer from './fileServer' 
 import secretManager from './secretManager' 
+import configManager from './configManager' 
 
 // 定义主窗口实例
 let mainWindow = null
@@ -156,7 +157,10 @@ async function createWindow() {
 
   // 窗口准备好时
   mainWindow.on('ready-to-show', () => {
-    // mainWindow.show() // 不再自动显示
+    const startMinimized = configManager.get('startMinimized');
+    if (startMinimized === false) {
+       mainWindow.show();
+    }
   })
 
   // === IPC 处理逻辑 ===
@@ -173,16 +177,39 @@ async function createWindow() {
   });
 
   // 1. 通用打开
-  ipcMain.on('run-path', async (event, targetPath) => {
+  ipcMain.on('run-path', async (event, payload) => {
+    const targetPath = typeof payload === 'string' ? payload : payload.path;
+    const isAdmin = typeof payload === 'object' ? payload.isAdmin : false;
+
     try {
       if (targetPath.startsWith('http')) {
         await shell.openExternal(targetPath);
+      } else if (isAdmin && process.platform === 'win32') {
+         // Windows Run as Admin
+         const { exec } = require('child_process');
+         // 使用 PowerShell 启动以获得管理员权限
+         const cmd = `powershell -Command "Start-Process '${targetPath}' -Verb RunAs"`;
+         exec(cmd, (err) => {
+            if (err) console.error('Admin Run Error:', err);
+         });
       } else {
         const err = await shell.openPath(targetPath);
         if (err) console.error('打开路径失败:', err);
       }
     } catch (e) {
       console.error('Run path error:', e);
+    }
+  });
+
+  // 1.1 获取文件图标
+  ipcMain.on('get-file-icon', async (event, path) => {
+    try {
+      const icon = await app.getFileIcon(path, { size: 'normal' });
+      event.reply('file-icon-data', { path, icon: icon.toDataURL() });
+    } catch (e) {
+      console.error('Failed to get icon:', e);
+      // 失败返回 null
+      event.reply('file-icon-data', { path, icon: null });
     }
   });
 
@@ -228,6 +255,15 @@ async function createWindow() {
   ipcMain.on('file-server-action', (event, args) => {
     if (args.action === 'start') event.reply('file-server-url', fileServer.startShare(args.payload));
   });
+
+  ipcMain.on('config-action', (event, args) => {
+    if (args.action === 'get') event.reply('config-data', { key: args.key, value: configManager.get(args.key) });
+    if (args.action === 'getAll') event.reply('config-data', configManager.getAll());
+    if (args.action === 'set') {
+      configManager.set(args.key, args.value);
+      event.reply('config-data', configManager.getAll());
+    }
+  });
   
   ipcMain.on('open-image-window', (event, url) => {
     let win = new BrowserWindow({ width: 400, height: 300, frame: false, alwaysOnTop: true, webPreferences: { nodeIntegration: false } });
@@ -255,47 +291,45 @@ if (!gotTheLock) {
 
   // Electron应用准备就绪
   app.whenReady().then(() => {
-    
-    // 1. 定义资源路径 (针对开发环境和生产环境可能不同，这里尝试从项目根目录找)
-    // 注意：__dirname 在 dist-electron/main 中
-    const projectRoot = join(__dirname, '../../'); 
-    const resourceIconPath = join(projectRoot, 'resources/icon.png');
-    const resourceDisabledPath = join(projectRoot, 'resources/icon-disabled.png');
 
-    console.log('[Main] Project Root inferred as:', projectRoot);
-    console.log('[Main] Looking for icon at:', resourceIconPath);
+    // 1. 定义资源路径
+    const projectRoot = join(__dirname, '../../');
+    const resourceIconPath = join(projectRoot, 'resources/icon-16.png');
+    const resourceDisabledPath = join(projectRoot, 'resources/icon-disabled-16.png');
 
-    // 2. 准备兜底图标 (32x32 红色方块) - 确保绝对可用
-    const fallbackIconDataUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABISURBVFhH7coxDQAACAOg9A/iFuuCB0zC2ZqZt9/Z+wUABQAFAAUABQAFAAUABQAFAAUABQAFAAUABQAFAAUABQAFAAUABQAFwFyGngX1090KyAAAAABJRU5ErkJggg==';
-    
-    // 3. 加载图标逻辑
+    console.log('[Main] Project Root:', projectRoot);
+    console.log('[Main] Icon path:', resourceIconPath);
+
+    // 2. 内嵌 Base64 图标作为后备 (16x16 闪电)
+    // 金黄色 = 启用状态, 灰色 = 禁用状态
+    const normalBase64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAPklEQVR42mNgIAD+v7b+//8gOxgzkAqopvn/DIb/A6SZVKejaybJdgzNWDB+Awhopm9ADpc0QP9Ao0QzJQAAiKW8uSSMRhMAAAAASUVORK5CYII=';
+    const disabledBase64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAPklEQVR42mNgIAD27t37f968eWDMQCqgmubS0tL/A6OZZKejaybJdnTN2DBeAwhppm9ADpM0QP9Ao0gzJQAA3Ve+t+1gsQQAAAAASUVORK5CYII=';
+
+    // 3. 加载图标逻辑 - 优先从文件加载，失败则用 Base64
     try {
-      if (fs.existsSync(resourceIconPath)) {
-        console.log('[Main] File exists. Loading...');
-        normalIconImage = nativeImage.createFromPath(resourceIconPath);
-        
-        if (normalIconImage.isEmpty()) {
-           console.error('[Main] ERROR: Icon file exists but loaded image is EMPTY!');
-           normalIconImage = nativeImage.createFromDataURL(fallbackIconDataUrl);
+        // 尝试从文件加载
+        if (fs.existsSync(resourceIconPath)) {
+            console.log('[Main] Loading icon from file...');
+            normalIconImage = nativeImage.createFromPath(resourceIconPath);
+            disabledIconImage = nativeImage.createFromPath(resourceDisabledPath);
         } else {
-           console.log('[Main] Icon loaded successfully. Size:', normalIconImage.getSize());
+            console.log('[Main] Icon files not found, using embedded Base64...');
+            normalIconImage = nativeImage.createFromDataURL(normalBase64);
+            disabledIconImage = nativeImage.createFromDataURL(disabledBase64);
         }
-      } else {
-        console.error('[Main] ERROR: Icon file NOT found at:', resourceIconPath);
-        normalIconImage = nativeImage.createFromDataURL(fallbackIconDataUrl);
-      }
-      
-      // 加载禁用图标 (类似逻辑)
-      if (fs.existsSync(resourceDisabledPath)) {
-        disabledIconImage = nativeImage.createFromPath(resourceDisabledPath);
-      }
-      if (!disabledIconImage || disabledIconImage.isEmpty()) {
-        disabledIconImage = nativeImage.createFromDataURL(fallbackIconDataUrl);
-      }
+
+        if (normalIconImage.isEmpty()) {
+            console.warn('[Main] Icon is empty, falling back to Base64...');
+            normalIconImage = nativeImage.createFromDataURL(normalBase64);
+            disabledIconImage = nativeImage.createFromDataURL(disabledBase64);
+        }
+
+        console.log('[Main] Icon loaded. Size:', normalIconImage.getSize());
 
     } catch (e) {
-      console.error('[Main] EXCEPTION during icon load:', e);
-      normalIconImage = nativeImage.createFromDataURL(fallbackIconDataUrl);
+      console.error('[Main] Icon load error:', e);
+      normalIconImage = nativeImage.createFromDataURL(normalBase64);
+      disabledIconImage = nativeImage.createFromDataURL(disabledBase64);
     }
 
     // 4. 创建窗口 (此时 normalIconImage 一定有值)
@@ -303,8 +337,12 @@ if (!gotTheLock) {
 
     // 5. 创建托盘
     try {
+        // 先销毁旧的 (如果有)
+        if (tray) tray.destroy();
+
         tray = new Tray(normalIconImage);
         tray.setToolTip('QuickerUse');
+        tray.setIgnoreDoubleClickEvents(false); // 允许双击事件
         
         const contextMenu = Menu.buildFromTemplate([
           { label: '退出', click: () => app.quit() }
