@@ -8,9 +8,13 @@
   "scripts": {
     "dev": "chcp 65001 && vite",
     "build": "vite build && electron-builder",
-    "build:win": "vite build && electron-builder --win",
+    "build:win": "vite build && electron-builder --win -c.win.target=nsis",
+    "build:win:portable": "vite build && electron-builder --win -c.win.target=portable",
+    "build:win:dir": "vite build && electron-builder --win -c.win.target=dir",
+    "build:win:all": "vite build && electron-builder --win -c.win.target=nsis -c.win.target=portable",
     "build:mac": "vite build && electron-builder --mac",
     "build:linux": "vite build && electron-builder --linux",
+    "rebuild": "npx @electron/rebuild",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -24,9 +28,11 @@
     "vue": "^3.3.11"
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.0.2",
     "@vitejs/plugin-vue": "^4.5.2",
     "electron": "^28.1.0",
     "electron-builder": "^24.9.1",
+    "node-abi": "^4.24.0",
     "sass": "^1.69.5",
     "typescript": "^5.2.2",
     "vite": "^5.0.10",
@@ -37,18 +43,40 @@
   "build": {
     "appId": "com.quickeruse.app",
     "productName": "QuickerUse",
+    "npmRebuild": false,
     "directories": {
       "output": "release"
     },
     "files": [
       "dist/**/*",
-      "dist-electron/**/*",
-      "resources/**/*"
+      "dist-electron/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/MouseHook.exe",
+        "to": "MouseHook.exe"
+      },
+      {
+        "from": "resources/icon.png",
+        "to": "icon.png"
+      },
+      {
+        "from": "resources/icon-16.png",
+        "to": "icon-16.png"
+      },
+      {
+        "from": "resources/icon-disabled-16.png",
+        "to": "icon-disabled-16.png"
+      }
     ],
     "win": {
       "target": [
         {
           "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
           "arch": ["x64"]
         }
       ],
@@ -59,7 +87,12 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "QuickerUse"
+      "shortcutName": "QuickerUse",
+      "license": "resources/license.txt",
+      "include": "resources/installer.nsh"
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-Portable.${ext}"
     },
     "mac": {
       "target": ["dmg"],

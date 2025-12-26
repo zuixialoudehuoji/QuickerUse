@@ -11,24 +11,18 @@
     <!-- 文本编辑器类型 -->
     <template v-if="modalData.type === 'text-editor'">
       <div class="toolbar" v-if="modalData.actions?.length > 0">
-        <el-button
-          v-for="btn in modalData.actions"
-          :key="btn.label"
-          size="small"
-          @click="btn.handler(textContent)"
-        >
-          {{ btn.label }}
-        </el-button>
-        <el-button size="small" type="primary" class="copy-btn" @click="copyResult">
-          <el-icon><DocumentCopy /></el-icon>
-          复制
-        </el-button>
+        <div class="action-btns">
+          <span
+            v-for="btn in modalData.actions"
+            :key="btn.label"
+            class="action-btn"
+            @click="btn.handler(textContent)"
+          >{{ btn.label }}</span>
+        </div>
+        <span class="action-btn primary" @click="copyResult">复制</span>
       </div>
       <div v-else class="toolbar">
-        <el-button size="small" type="primary" @click="copyResult">
-          <el-icon><DocumentCopy /></el-icon>
-          复制结果
-        </el-button>
+        <span class="action-btn primary" @click="copyResult">复制结果</span>
       </div>
       <el-input
         v-model="textContent"
@@ -46,40 +40,32 @@
         <el-input
           v-model="extractInput"
           type="textarea"
-          :rows="4"
+          :rows="3"
           placeholder="输入或粘贴要提取的文本..."
           class="extract-input"
         />
-        <div class="extract-types">
-          <el-button
-            v-for="type in extractTypes"
-            :key="type.key"
-            size="small"
-            :type="activeExtractType === type.key ? 'primary' : 'default'"
-            @click="doExtract(type.key)"
-          >
-            <el-icon><component :is="type.icon" /></el-icon>
-            {{ type.label }}
-          </el-button>
+        <div class="extract-bar">
+          <div class="extract-btns">
+            <span
+              v-for="type in extractTypes"
+              :key="type.key"
+              class="action-btn"
+              :class="{ active: activeExtractType === type.key }"
+              @click="doExtract(type.key)"
+            >{{ type.label }}</span>
+          </div>
+          <span v-if="extractResult.length > 0" class="action-btn primary" @click="copyExtractResult">复制全部</span>
         </div>
         <div class="extract-result" v-if="extractResult.length > 0">
-          <div class="result-header">
-            <span>提取结果 ({{ extractResult.length }})</span>
-            <el-button text size="small" @click="copyExtractResult">复制全部</el-button>
-          </div>
-          <div class="result-list">
-            <div
-              v-for="(item, idx) in extractResult"
-              :key="idx"
-              class="result-item"
-              @click="copyText(item)"
-            >
-              {{ item }}
-            </div>
-          </div>
+          <div
+            v-for="(item, idx) in extractResult"
+            :key="idx"
+            class="result-item"
+            @click="copyText(item)"
+          >{{ item }}</div>
         </div>
         <div v-else-if="activeExtractType" class="extract-empty">
-          未提取到{{ extractTypes.find(t => t.key === activeExtractType)?.label }}
+          未找到匹配项
         </div>
       </div>
     </template>
@@ -166,7 +152,7 @@
 <script setup>
 import { ref, reactive, watch, nextTick, onMounted, onUnmounted } from 'vue';
 import { ElMessage } from 'element-plus';
-import { DocumentCopy, Download, Delete, Plus, Monitor, Message, Iphone, Link } from '@element-plus/icons-vue';
+import { Download, Delete, Plus, Monitor, Message, Iphone, Link } from '@element-plus/icons-vue';
 import QRCode from 'qrcode';
 
 const props = defineProps({
@@ -427,27 +413,44 @@ defineExpose({
 
 .toolbar {
   display: flex;
-  gap: 8px;
-  margin-bottom: 12px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  padding: 8px;
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 6px;
+}
+
+.action-btns {
+  display: flex;
   flex-wrap: wrap;
-  padding: 10px;
-  background: rgba(0, 0, 0, 0.1);
-  border-radius: 10px;
+  gap: 4px;
 }
 
-.toolbar .el-button {
-  border-radius: 18px;
+.action-btn {
+  display: inline-block;
+  padding: 4px 10px;
   font-size: 12px;
-  padding: 6px 14px;
-  height: auto;
+  color: var(--text-color);
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
 }
 
-.toolbar .el-button--primary {
-  box-shadow: 0 2px 8px rgba(64, 158, 255, 0.3);
+.action-btn:hover {
+  background: rgba(64, 158, 255, 0.3);
+  color: #fff;
 }
 
-.copy-btn {
-  margin-left: auto;
+.action-btn.primary {
+  background: #409eff;
+  color: #fff;
+}
+
+.action-btn.primary:hover {
+  background: #66b1ff;
 }
 
 .code-editor :deep(.el-textarea__inner) {
@@ -463,78 +466,55 @@ defineExpose({
 .extract-container {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 10px;
 }
 
 .extract-input :deep(.el-textarea__inner) {
   background: rgba(0, 0, 0, 0.2);
   border: 1px solid var(--grid-line);
   color: var(--text-color);
-  border-radius: 8px;
+  border-radius: 6px;
+  font-size: 13px;
 }
 
-.extract-types {
+.extract-bar {
   display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  padding: 12px;
-  background: rgba(0, 0, 0, 0.1);
-  border-radius: 10px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px;
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 6px;
 }
 
-.extract-types .el-button {
-  border-radius: 20px;
-  padding: 8px 16px;
+.extract-btns {
+  display: flex;
+  gap: 4px;
+}
+
+.action-btn.active {
+  background: #409eff;
+  color: #fff;
 }
 
 .extract-result {
   border: 1px solid var(--grid-line);
-  border-radius: 10px;
+  border-radius: 6px;
   overflow: hidden;
-  background: rgba(0, 0, 0, 0.1);
-}
-
-.result-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px 16px;
-  background: linear-gradient(135deg, rgba(64, 158, 255, 0.15) 0%, rgba(103, 126, 234, 0.15) 100%);
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--accent-color);
-}
-
-.result-list {
-  max-height: 220px;
+  max-height: 150px;
   overflow-y: auto;
 }
 
 .result-item {
-  padding: 12px 16px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--grid-line);
-  font-size: 13px;
-  font-family: 'Consolas', 'Monaco', monospace;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.result-item::before {
-  content: '📋';
   font-size: 12px;
-  opacity: 0.5;
+  font-family: 'Consolas', monospace;
+  cursor: pointer;
+  color: var(--text-color);
 }
 
 .result-item:hover {
   background: rgba(64, 158, 255, 0.15);
-  padding-left: 20px;
-}
-
-.result-item:hover::before {
-  opacity: 1;
 }
 
 .result-item:last-child {
@@ -543,11 +523,9 @@ defineExpose({
 
 .extract-empty {
   text-align: center;
-  padding: 30px 20px;
+  padding: 20px;
   color: var(--text-dim);
-  font-size: 14px;
-  background: rgba(0, 0, 0, 0.05);
-  border-radius: 10px;
+  font-size: 13px;
 }
 
 /* 倒计时 */

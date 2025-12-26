@@ -310,7 +310,7 @@ const captureHotkey = (e, action) => {
 }
 
 .toggle-icon {
-  font-size: 14px;
+  font-size: 25px;
   padding: 4px;
   border-radius: 4px;
   cursor: pointer;

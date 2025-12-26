@@ -4,6 +4,9 @@
     <div class="title-bar" style="-webkit-app-region: drag;">
       <span class="app-title">QuickerUse</span>
       <div class="bar-actions" style="-webkit-app-region: no-drag;">
+        <el-tooltip content="关于" placement="bottom">
+          <el-icon class="action-icon" @click="showAbout = true"><InfoFilled /></el-icon>
+        </el-tooltip>
         <el-tooltip content="设置" placement="bottom">
           <el-icon class="action-icon" @click="showSettings = true"><Setting /></el-icon>
         </el-tooltip>
@@ -13,6 +16,9 @@
               <path d="M16 4.5v-.5c0-1.1-.9-2-2-2h-4c-1.1 0-2 .9-2 2v.5l-2 2v3.5h4v9l2 2 2-2v-9h4V6.5l-2-2zm0 4h-8V7l1-1V4h6v2l1 1v1.5z"/>
             </svg>
           </span>
+        </el-tooltip>
+        <el-tooltip content="最小化到托盘" placement="bottom">
+          <el-icon class="action-icon close-icon" @click="hideToTray"><Close /></el-icon>
         </el-tooltip>
       </div>
     </div>
@@ -109,13 +115,48 @@
         <el-button size="small" type="primary" @click="confirmDialogData.onConfirm">确定</el-button>
       </template>
     </el-dialog>
+
+    <!-- 关于弹窗 -->
+    <el-dialog
+      v-model="showAbout"
+      title="关于"
+      width="300px"
+      class="about-dialog"
+      align-center
+    >
+      <div class="about-content">
+        <div class="about-logo">
+          <svg viewBox="0 0 64 64" width="56" height="56">
+            <defs>
+              <linearGradient id="logoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:#667eea"/>
+                <stop offset="100%" style="stop-color:#764ba2"/>
+              </linearGradient>
+            </defs>
+            <rect width="64" height="64" rx="12" fill="url(#logoGrad)"/>
+            <path d="M35 12L20 33h9l-4 19 19-24h-10l6-16z" fill="#FFD700"/>
+          </svg>
+        </div>
+        <h2 class="about-name">QuickerUse</h2>
+        <p class="about-ver">版本 0.1.0</p>
+        <p class="about-desc">极简高效的鼠标优先效率工具</p>
+        <div class="about-features">
+          <span>智能感知</span>
+          <span>快捷搜索</span>
+          <span>开发工具</span>
+          <span>自定义启动</span>
+        </div>
+        <p class="about-author">作者：zuixianloudehuoji</p>
+        <p class="about-copy">© 2024 QuickerUse</p>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, computed, onMounted, watch } from 'vue';
 import { ElMessage } from 'element-plus';
-import { Setting } from '@element-plus/icons-vue';
+import { Setting, InfoFilled, Close } from '@element-plus/icons-vue';
 
 // 组件
 import ToolGrid from './components/ToolGrid.vue';
@@ -128,7 +169,7 @@ import ManageFeaturesModal from './components/ManageFeaturesModal.vue';
 // 工具
 import textProcessor from './utils/textProcessor';
 import fileProcessor from './utils/fileProcessor';
-import { ALL_FEATURES, DEFAULT_SETTINGS } from './utils/constants';
+import { ALL_FEATURES, DEFAULT_SETTINGS, SEARCH_ENGINES, TRANSLATE_SERVICES } from './utils/constants';
 
 // === 状态 ===
 const clipboardContent = ref('');
@@ -146,6 +187,7 @@ const showFileInfo = ref(false);
 const showManageFeatures = ref(false);
 const showFeatureModal = ref(false);
 const showConfirmDialog = ref(false);
+const showAbout = ref(false);
 
 // 确认弹窗数据
 const confirmDialogData = reactive({
@@ -219,13 +261,17 @@ const handleSmartClick = (item) => {
   // 搜索
   if (action === 'search-google') {
     if (!rawText.trim()) return ElMessage.warning('无内容可搜索');
-    window.api?.send('run-path', `https://www.google.com/search?q=${encodeURIComponent(rawText.trim())}`);
+    const engine = settings.searchEngine || 'google';
+    const url = SEARCH_ENGINES[engine].replace('{query}', encodeURIComponent(rawText.trim()));
+    window.api?.send('run-path', url);
     window.api?.send('hide-window');
   }
   // 翻译
   else if (action === 'translate') {
     if (!rawText.trim()) return ElMessage.warning('无内容可翻译');
-    window.api?.send('run-path', `https://translate.google.com/?text=${encodeURIComponent(rawText.trim())}`);
+    const service = settings.translateService || 'google';
+    let url = TRANSLATE_SERVICES[service].replace('{text}', encodeURIComponent(rawText.trim()));
+    window.api?.send('run-path', url);
     window.api?.send('hide-window');
   }
   // JSON处理
@@ -249,98 +295,71 @@ const handleSmartClick = (item) => {
   }
   // 时间戳转换
   else if (action === 'timestamp-convert') {
-    // 时间格式化函数
+    const pad = (n) => String(n).padStart(2, '0');
+
     const formatDate = (date, format) => {
-      const pad = (n) => String(n).padStart(2, '0');
-      const year = date.getFullYear();
-      const month = pad(date.getMonth() + 1);
-      const day = pad(date.getDate());
-      const hour = pad(date.getHours());
-      const minute = pad(date.getMinutes());
-      const second = pad(date.getSeconds());
-
-      switch (format) {
-        case 'standard': return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
-        case 'date': return `${year}-${month}-${day}`;
-        case 'time': return `${hour}:${minute}:${second}`;
-        case 'chinese': return `${year}年${month}月${day}日 ${hour}:${minute}:${second}`;
-        case 'slash': return `${year}/${month}/${day} ${hour}:${minute}:${second}`;
-        case 'compact': return `${year}${month}${day}${hour}${minute}${second}`;
-        case 'iso': return date.toISOString();
-        case 'utc': return date.toUTCString();
-        default: return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
-      }
+      const y = date.getFullYear(), m = pad(date.getMonth() + 1), d = pad(date.getDate());
+      const H = pad(date.getHours()), M = pad(date.getMinutes()), S = pad(date.getSeconds());
+      const formats = {
+        'std': `${y}-${m}-${d} ${H}:${M}:${S}`,
+        'date': `${y}-${m}-${d}`,
+        'time': `${H}:${M}:${S}`,
+        'cn': `${y}年${m}月${d}日 ${H}:${M}:${S}`,
+        'compact': `${y}${m}${d}${H}${M}${S}`
+      };
+      return formats[format] || formats['std'];
     };
 
-    const parseAndFormat = (t, format) => {
-      const trimmed = t.trim();
-      let date;
-      if (/^\d{10}$/.test(trimmed)) {
-        date = new Date(parseInt(trimmed) * 1000);
-      } else if (/^\d{13}$/.test(trimmed)) {
-        date = new Date(parseInt(trimmed));
-      } else {
-        date = new Date(trimmed);
-      }
-      if (isNaN(date.getTime())) return '无效的时间格式';
-      return formatDate(date, format);
+    const parse = (t) => {
+      const s = t.trim();
+      if (/^\d{10}$/.test(s)) return new Date(parseInt(s) * 1000);
+      if (/^\d{13}$/.test(s)) return new Date(parseInt(s));
+      return new Date(s);
     };
 
-    const toTimestamp = (t, type) => {
+    const toFormat = (t, fmt) => {
+      const date = parse(t);
+      return isNaN(date.getTime()) ? '无效时间' : formatDate(date, fmt);
+    };
+
+    const toTs = (t, ms) => {
       const date = new Date(t.trim());
       if (isNaN(date.getTime())) return '无效日期';
-      return type === 'ms' ? date.getTime().toString() : Math.floor(date.getTime() / 1000).toString();
+      return ms ? date.getTime().toString() : Math.floor(date.getTime() / 1000).toString();
     };
 
-    let result = '';
-    if (textProcessor.isTimestamp(rawText.trim())) {
-      result = parseAndFormat(rawText, 'standard');
-    } else {
-      result = toTimestamp(rawText, 's');
-    }
+    const isTs = textProcessor.isTimestamp(rawText.trim());
+    const result = isTs ? toFormat(rawText, 'std') : toTs(rawText, false);
 
     openTextEditor('时间戳转换', result, [
-      { label: '标准格式', handler: (t) => { featureModalRef.value?.setContent(parseAndFormat(t, 'standard')); } },
-      { label: '仅日期', handler: (t) => { featureModalRef.value?.setContent(parseAndFormat(t, 'date')); } },
-      { label: '仅时间', handler: (t) => { featureModalRef.value?.setContent(parseAndFormat(t, 'time')); } },
-      { label: '中文格式', handler: (t) => { featureModalRef.value?.setContent(parseAndFormat(t, 'chinese')); } },
-      { label: '斜杠格式', handler: (t) => { featureModalRef.value?.setContent(parseAndFormat(t, 'slash')); } },
-      { label: '紧凑格式', handler: (t) => { featureModalRef.value?.setContent(parseAndFormat(t, 'compact')); } },
-      { label: 'ISO格式', handler: (t) => { featureModalRef.value?.setContent(parseAndFormat(t, 'iso')); } },
-      { label: 'UTC格式', handler: (t) => { featureModalRef.value?.setContent(parseAndFormat(t, 'utc')); } },
-      { label: '秒级时间戳', handler: (t) => { featureModalRef.value?.setContent(toTimestamp(t, 's')); } },
-      { label: '毫秒时间戳', handler: (t) => { featureModalRef.value?.setContent(toTimestamp(t, 'ms')); } }
+      { label: '标准', handler: (t) => { featureModalRef.value?.setContent(toFormat(t, 'std')); } },
+      { label: '日期', handler: (t) => { featureModalRef.value?.setContent(toFormat(t, 'date')); } },
+      { label: '时间', handler: (t) => { featureModalRef.value?.setContent(toFormat(t, 'time')); } },
+      { label: '中文', handler: (t) => { featureModalRef.value?.setContent(toFormat(t, 'cn')); } },
+      { label: '紧凑', handler: (t) => { featureModalRef.value?.setContent(toFormat(t, 'compact')); } },
+      { label: '秒戳', handler: (t) => { featureModalRef.value?.setContent(toTs(t, false)); } },
+      { label: '毫秒戳', handler: (t) => { featureModalRef.value?.setContent(toTs(t, true)); } }
     ]);
   }
   // 变量命名转换
   else if (action === 'to-camel') {
-    const toCamel = (s) => {
-      // 先转小写，处理下划线和横线
-      return s.toLowerCase().replace(/[-_]([a-z])/g, (g) => g[1].toUpperCase());
-    };
-    const toSnake = (s) => {
-      // 处理驼峰转下划线
-      return s.replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase().replace(/[-\s]/g, '_');
-    };
-    const toKebab = (s) => {
-      // 处理驼峰转横线
-      return s.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase().replace(/[_\s]/g, '-');
-    };
-    const toPascal = (s) => {
-      // 帕斯卡命名（大驼峰）
-      const camel = toCamel(s);
-      return camel.charAt(0).toUpperCase() + camel.slice(1);
-    };
-    const toUpper = (s) => {
-      // 全大写下划线
-      return toSnake(s).toUpperCase();
-    };
+    // 支持空格、下划线、横线分隔的转换
+    const toCamel = (s) => s.trim().toLowerCase().replace(/[-_\s]+([a-z])/g, (_, c) => c.toUpperCase());
+    const toSnake = (s) => s.trim().replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase().replace(/[-\s]+/g, '_');
+    const toKebab = (s) => s.trim().replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase().replace(/[_\s]+/g, '-');
+    const toPascal = (s) => { const c = toCamel(s); return c.charAt(0).toUpperCase() + c.slice(1); };
+    const toUpper = (s) => toSnake(s).toUpperCase();
+
+    // 保存原始文本用于复原
+    const originalText = rawText;
+
     openTextEditor('变量命名转换', toCamel(rawText), [
-      { label: '小驼峰 camelCase', handler: (t) => { featureModalRef.value?.setContent(toCamel(t)); } },
-      { label: '大驼峰 PascalCase', handler: (t) => { featureModalRef.value?.setContent(toPascal(t)); } },
-      { label: '下划线 snake_case', handler: (t) => { featureModalRef.value?.setContent(toSnake(t)); } },
-      { label: '横线 kebab-case', handler: (t) => { featureModalRef.value?.setContent(toKebab(t)); } },
-      { label: '常量 UPPER_CASE', handler: (t) => { featureModalRef.value?.setContent(toUpper(t)); } }
+      { label: '小驼峰', handler: (t) => { featureModalRef.value?.setContent(toCamel(t)); } },
+      { label: '大驼峰', handler: (t) => { featureModalRef.value?.setContent(toPascal(t)); } },
+      { label: '下划线', handler: (t) => { featureModalRef.value?.setContent(toSnake(t)); } },
+      { label: '横线', handler: (t) => { featureModalRef.value?.setContent(toKebab(t)); } },
+      { label: '大写', handler: (t) => { featureModalRef.value?.setContent(toUpper(t)); } },
+      { label: '复原', handler: () => { featureModalRef.value?.setContent(originalText); } }
     ]);
   }
   // YAML处理
@@ -455,25 +474,7 @@ const handleSmartClick = (item) => {
   }
   // 贴图置顶
   else if (action === 'snip-pin') {
-    navigator.clipboard.read().then(async items => {
-      for (const item of items) {
-        if (item.types.includes('image/png')) {
-          const blob = await item.getType('image/png');
-          // 转换为 base64 以便跨窗口使用
-          const reader = new FileReader();
-          reader.onload = () => {
-            const base64 = reader.result;
-            window.api?.send('open-image-window', base64);
-            window.api?.send('hide-window');
-          };
-          reader.readAsDataURL(blob);
-          return;
-        }
-      }
-      ElMessage.warning('剪贴板中没有图片');
-    }).catch(() => {
-      ElMessage.warning('无法读取剪贴板');
-    });
+    window.api?.send('snip-pin');
   }
   // 倒计时
   else if (action === 'timer') {
@@ -676,6 +677,11 @@ const togglePin = () => {
   window.api?.send('set-always-on-top', isPinned.value);
 };
 
+// 最小化到托盘
+const hideToTray = () => {
+  window.api?.send('hide-window');
+};
+
 // 保存数据
 const saveData = () => {
   localStorage.setItem('smart-blacklist', JSON.stringify([...smartBlacklist.value]));
@@ -706,13 +712,14 @@ onMounted(() => {
   document.addEventListener('keyup', (e) => {
     if (e.key === 'Escape') {
       if (showSettings.value || showAddTool.value || showFileInfo.value ||
-          showManageFeatures.value || showFeatureModal.value || showConfirmDialog.value) {
+          showManageFeatures.value || showFeatureModal.value || showConfirmDialog.value || showAbout.value) {
         showSettings.value = false;
         showAddTool.value = false;
         showFileInfo.value = false;
         showManageFeatures.value = false;
         showFeatureModal.value = false;
         showConfirmDialog.value = false;
+        showAbout.value = false;
       } else {
         window.api?.send('hide-window');
       }
@@ -735,6 +742,18 @@ onMounted(() => {
     window.api.on('color-picked', ({ success, color }) => {
       if (success) {
         ElMessage.success('颜色已复制: ' + color);
+      }
+    });
+
+    // 托盘菜单显示关于
+    window.api.on('show-about', () => {
+      showAbout.value = true;
+    });
+
+    // 贴图置顶结果
+    window.api.on('snip-pin-result', ({ success, error }) => {
+      if (!success) {
+        ElMessage.warning(error || '贴图失败');
       }
     });
 
@@ -831,5 +850,85 @@ onMounted(() => {
   color: var(--text-color);
   font-size: 14px;
   line-height: 1.6;
+}
+
+/* 关闭按钮 */
+.close-icon:hover {
+  color: #f56c6c !important;
+  background: rgba(245, 108, 108, 0.15) !important;
+}
+
+/* 关于弹窗 */
+.about-dialog :deep(.el-dialog) {
+  border-radius: 12px;
+  background: var(--modal-bg);
+}
+
+.about-dialog :deep(.el-dialog__header) {
+  border-bottom: 1px solid var(--grid-line);
+  padding: 12px 16px;
+}
+
+.about-dialog :deep(.el-dialog__body) {
+  padding: 20px;
+}
+
+.about-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.about-logo {
+  margin-bottom: 12px;
+}
+
+.about-name {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-color);
+  margin: 0 0 4px 0;
+}
+
+.about-ver {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin: 0 0 8px 0;
+}
+
+.about-desc {
+  font-size: 13px;
+  color: var(--text-color);
+  margin: 0 0 12px 0;
+}
+
+.about-features {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.about-features span {
+  font-size: 10px;
+  padding: 3px 8px;
+  background: rgba(64, 158, 255, 0.1);
+  color: var(--accent-color);
+  border-radius: 10px;
+  border: 1px solid rgba(64, 158, 255, 0.2);
+}
+
+.about-author {
+  font-size: 13px;
+  color: var(--text-color);
+  margin: 0 0 8px 0;
+}
+
+.about-copy {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin: 0;
 }
 </style>

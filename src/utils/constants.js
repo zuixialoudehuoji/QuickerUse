@@ -159,7 +159,25 @@ export const DEFAULT_SETTINGS = {
   customRows: 3,
   globalHotkey: 'Alt+Space',
   followMouse: true,
-  autoStart: false
+  autoStart: false,
+  searchEngine: 'google',
+  translateService: 'google'
+};
+
+// 搜索引擎URL模板
+export const SEARCH_ENGINES = {
+  google: 'https://www.google.com/search?q={query}',
+  baidu: 'https://www.baidu.com/s?wd={query}',
+  bing: 'https://www.bing.com/search?q={query}',
+  duckduckgo: 'https://duckduckgo.com/?q={query}'
+};
+
+// 翻译服务URL模板
+export const TRANSLATE_SERVICES = {
+  google: 'https://translate.google.com/?sl=auto&tl=zh-CN&text={text}',
+  deepl: 'https://www.deepl.com/translator#auto/zh/{text}',
+  baidu: 'https://fanyi.baidu.com/#auto/zh/{text}',
+  youdao: 'https://fanyi.youdao.com/?keyfrom=fanyi.web'
 };
 
 // 分类定义

@@ -22,8 +22,17 @@ let lastActiveWindowHandle = null  // 记录唤醒前的活动窗口句柄
 // 开发模式判断
 const isDev = process.env.NODE_ENV === 'development'
 
-// 资源路径
-const mouseHookPath = join(__dirname, '../../resources/MouseHook.exe');
+// 资源路径 - 打包后需要从 resources 目录读取
+const getResourcePath = (filename) => {
+  if (isDev) {
+    return join(__dirname, '../../resources', filename);
+  }
+  // 打包后，extraResources 会被复制到 resources 目录
+  return join(process.resourcesPath, filename);
+};
+
+const mouseHookPath = getResourcePath('MouseHook.exe');
+let middleClickEnabled = true; // 中键唤醒开关
 
 function updateTrayIcon() {
   if (tray && normalIconImage && disabledIconImage) {
@@ -46,9 +55,7 @@ function activateApp(targetAction = null, fromHotkey = false) {
   // 1. 备份剪贴板内容
   const originalText = clipboard.readText();
   console.log('========== 唤醒 ==========');
-  console.log('[1] 原始剪贴板内容:');
-  console.log(originalText || '(空)');
-  console.log('[1] 原始剪贴板长度:', originalText ? originalText.length : 0);
+  console.log('[1] 原始剪贴板:', originalText ? `${originalText.length}字` : '(空)');
 
   // 2. 清空剪贴板
   clipboard.clear();
@@ -56,53 +63,58 @@ function activateApp(targetAction = null, fromHotkey = false) {
   // 3. 发送 Ctrl+C 获取选中内容
   systemTools.simulateCopy(fromHotkey);
 
-  // 4. 等待剪贴板更新
+  // 4. 等待剪贴板更新 (增加等待时间到150ms，轮询检查)
   let selectedText = '';
   const start = Date.now();
-  while (Date.now() - start < 80) {
+  const maxWait = 150;  // 最大等待150ms
+  while (Date.now() - start < maxWait) {
     const currentClip = clipboard.readText();
     if (currentClip) {
       selectedText = currentClip;
+      // 获取到内容后再等待一小段时间确保完整
+      const waitMore = Date.now();
+      while (Date.now() - waitMore < 20) {
+        const newClip = clipboard.readText();
+        if (newClip && newClip.length > selectedText.length) {
+          selectedText = newClip;
+        }
+      }
       break;
     }
   }
 
-  console.log('[2] Ctrl+C后获取:');
-  console.log(selectedText || '(无)');
-  console.log('[2] 获取长度:', selectedText ? selectedText.length : 0);
+  console.log('[2] Ctrl+C后:', selectedText ? `${selectedText.length}字` : '(空)');
 
   // 5. 记录活动窗口句柄
   lastActiveWindowHandle = systemTools.getForegroundWindow();
 
   // 6. 判断是否为真正的选中内容
   let finalText = '';
-  // 检测整行复制的特征：
-  // 1. 以换行符结尾
-  // 2. 只有一行内容（不含换行符的情况下）
-  // 3. 内容与原剪贴板相同（说明Ctrl+C没有效果）
+
+  // 检测IDE整行复制特征：以换行符结尾的单行内容（VSCode等IDE在无选中时Ctrl+C会复制整行）
   const isLineCopy = selectedText && (
     selectedText.endsWith('\n') ||
     selectedText.endsWith('\r\n') ||
     selectedText.endsWith('\r')
   );
-  // 检查是否只是单行内容（去掉结尾换行后没有其他换行）
   const isSingleLineCopy = isLineCopy && !selectedText.trim().includes('\n');
-  // 如果复制的内容与原剪贴板完全相同，可能是没有选中任何内容
-  const isSameAsOriginal = selectedText && originalText && selectedText === originalText;
 
-  console.log('[3] 是否整行复制:', isLineCopy, '单行:', isSingleLineCopy, '与原相同:', isSameAsOriginal);
+  console.log('[3] 整行复制检测:', isLineCopy ? (isSingleLineCopy ? '是(单行)' : '否(多行)') : '否');
 
-  // 只有当：有内容、不是整行复制、不是单行自动复制、与原内容不同时，才使用选中内容
-  if (selectedText && selectedText.trim() && !isSingleLineCopy && !isSameAsOriginal) {
+  // 核心判断逻辑：
+  // 1. 如果Ctrl+C后有内容，且不是IDE的单行自动复制 → 使用选中内容
+  // 2. 如果Ctrl+C后无内容，或是单行自动复制 → 使用原剪贴板内容
+  if (selectedText && selectedText.trim() && !isSingleLineCopy) {
     finalText = selectedText;
     console.log('[结果] => 使用选中内容');
+    // 注意：不恢复原剪贴板，因为用户选中的内容现在就在剪贴板中
   } else {
+    // 恢复原剪贴板
     if (originalText) {
       clipboard.writeText(originalText);
     }
-    // 传递完整剪贴板内容，让前端决定如何使用
     finalText = originalText || '';
-    console.log('[结果] => 恢复原剪贴板，传递完整内容');
+    console.log('[结果] => 使用原剪贴板内容');
   }
   console.log('==========================');
 
@@ -226,7 +238,7 @@ async function createWindow() {
 
   mainWindow = new BrowserWindow({
     width: 320,
-    height: 600,
+    height: 615,
     frame: false,
     transparent: false,
     backgroundColor: '#1e1e1e',
@@ -1119,6 +1131,184 @@ async function createWindow() {
   ipcMain.on('minimize-window', () => mainWindow.minimize());
   ipcMain.on('close-window', () => app.quit());
   ipcMain.on('hide-window', () => mainWindow.hide());
+
+  // 中键唤醒设置
+  ipcMain.on('set-middle-click', (event, enabled) => {
+    middleClickEnabled = enabled;
+    configManager.set('middleClickEnabled', enabled);
+    console.log('[Main] Middle click enabled:', enabled);
+
+    if (process.platform === 'win32') {
+      if (enabled && !mouseHookProc) {
+        startMouseHook();
+      } else if (!enabled && mouseHookProc) {
+        stopMouseHook();
+      }
+    }
+    event.reply('middle-click-status', { enabled });
+  });
+
+  ipcMain.on('get-middle-click', (event) => {
+    event.reply('middle-click-status', { enabled: middleClickEnabled });
+  });
+
+  // 贴图置顶 - 从剪贴板读取图片
+  ipcMain.on('snip-pin', (event) => {
+    const image = clipboard.readImage();
+    if (image.isEmpty()) {
+      event.reply('snip-pin-result', { success: false, error: '剪贴板中没有图片' });
+      return;
+    }
+
+    // 获取图片原始尺寸
+    const size = image.getSize();
+    const base64 = image.toDataURL();
+
+    // 创建窗口，使用图片原始大小
+    let imgWin = new BrowserWindow({
+      width: size.width + 16,  // 加上边距
+      height: size.height + 16,
+      frame: false,
+      alwaysOnTop: true,
+      transparent: true,
+      resizable: true,
+      skipTaskbar: true,
+      hasShadow: false,
+      webPreferences: {
+        nodeIntegration: true,
+        contextIsolation: false
+      }
+    });
+
+    const htmlContent = `
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%; height: 100%;
+      background: transparent;
+      overflow: hidden;
+    }
+    .container {
+      width: 100%; height: 100%;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      position: relative;
+      padding: 8px;
+      -webkit-app-region: drag;
+    }
+    .img-wrapper {
+      position: relative;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow:
+        0 0 0 1px rgba(255,255,255,0.1),
+        0 4px 16px rgba(0,0,0,0.4),
+        0 8px 32px rgba(0,0,0,0.3);
+    }
+    img {
+      display: block;
+      max-width: none;
+      max-height: none;
+      pointer-events: none;
+    }
+    .close-btn {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      width: 24px;
+      height: 24px;
+      background: rgba(0,0,0,0.6);
+      border: none;
+      border-radius: 50%;
+      color: white;
+      font-size: 14px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 10;
+      -webkit-app-region: no-drag;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+    .container:hover .close-btn { opacity: 1; }
+    .close-btn:hover { background: rgba(220,53,69,0.9); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="img-wrapper">
+      <img src="${base64}" />
+    </div>
+    <button class="close-btn" id="closeBtn">×</button>
+  </div>
+  <script>
+    document.getElementById('closeBtn').onclick = () => window.close();
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' || e.key === 'q' || e.key === 'Q') window.close();
+    });
+    window.focus();
+  </script>
+</body>
+</html>`;
+
+    imgWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(htmlContent));
+    imgWin.once('ready-to-show', () => imgWin.focus());
+    imgWin.on('closed', () => { imgWin = null; });
+
+    // 隐藏主窗口
+    if (mainWindow) mainWindow.hide();
+  });
+}
+
+// 启动鼠标钩子
+function startMouseHook() {
+  if (mouseHookProc) return;
+
+  try {
+    console.log('[Main] Starting MouseHook:', mouseHookPath);
+    mouseHookProc = spawn(mouseHookPath);
+
+    mouseHookProc.stdout.on('data', (data) => {
+      const msg = data.toString().trim();
+      if (msg.includes('MIDDLE_CLICK') && middleClickEnabled) {
+        console.log('[Main] Middle Click Detected');
+        activateApp();
+      }
+    });
+
+    mouseHookProc.on('error', (err) => {
+      // 忽略 EPIPE 错误
+      if (err.code !== 'EPIPE') {
+        console.error('[Main] MouseHook Error:', err);
+      }
+      mouseHookProc = null;
+    });
+
+    mouseHookProc.on('close', (code) => {
+      mouseHookProc = null;
+    });
+
+  } catch (e) {
+    console.error('[Main] Failed to start MouseHook:', e);
+    mouseHookProc = null;
+  }
+}
+
+// 停止鼠标钩子
+function stopMouseHook() {
+  if (mouseHookProc) {
+    try {
+      mouseHookProc.kill();
+    } catch (e) {
+      // 忽略进程已退出的错误
+    }
+    mouseHookProc = null;
+  }
 }
 
 // 单例锁
@@ -1139,12 +1329,13 @@ if (!gotTheLock) {
     // 初始化密钥管理器
     secretManager.init();
 
-    // 1. 定义资源路径
-    const projectRoot = join(__dirname, '../../');
-    const resourceIconPath = join(projectRoot, 'resources/icon-16.png');
-    const resourceDisabledPath = join(projectRoot, 'resources/icon-disabled-16.png');
+    // 从配置读取中键设置
+    middleClickEnabled = configManager.get('middleClickEnabled') !== false;
 
-    console.log('[Main] Project Root:', projectRoot);
+    // 1. 定义资源路径 - 使用统一的 getResourcePath
+    const resourceIconPath = getResourcePath('icon-16.png');
+    const resourceDisabledPath = getResourcePath('icon-disabled-16.png');
+
     console.log('[Main] Icon path:', resourceIconPath);
 
     // 2. 内嵌 Base64 图标作为后备 (16x16 闪电)
@@ -1190,18 +1381,68 @@ if (!gotTheLock) {
         tray = new Tray(normalIconImage);
         tray.setToolTip('QuickerUse');
         tray.setIgnoreDoubleClickEvents(false); // 允许双击事件
-        
-        const contextMenu = Menu.buildFromTemplate([
-          { label: '退出', click: () => app.quit() }
-        ]);
-        tray.setContextMenu(contextMenu);
 
+        // 构建托盘菜单的函数
+        const buildTrayMenu = () => {
+          return Menu.buildFromTemplate([
+            {
+              label: '显示窗口',
+              click: () => {
+                if (mainWindow) {
+                  mainWindow.show();
+                  mainWindow.focus();
+                }
+              }
+            },
+            { type: 'separator' },
+            {
+              label: isAppDisabled ? '启用' : '禁用',
+              click: () => {
+                isAppDisabled = !isAppDisabled;
+                updateTrayIcon();
+                tray.setContextMenu(buildTrayMenu());
+              }
+            },
+            { type: 'separator' },
+            {
+              label: '关于',
+              click: () => {
+                if (mainWindow) {
+                  mainWindow.show();
+                  mainWindow.focus();
+                  mainWindow.webContents.send('show-about');
+                }
+              }
+            },
+            { type: 'separator' },
+            {
+              label: '退出',
+              click: () => app.quit()
+            }
+          ]);
+        };
+
+        tray.setContextMenu(buildTrayMenu());
+
+        // 单击显示窗口
+        tray.on('click', () => {
+          if (mainWindow) {
+            if (mainWindow.isVisible()) {
+              mainWindow.hide();
+            } else {
+              mainWindow.show();
+              mainWindow.focus();
+            }
+          }
+        });
+
+        // 双击切换禁用状态
         tray.on('double-click', () => {
           isAppDisabled = !isAppDisabled;
           updateTrayIcon();
-          console.log(`App ${isAppDisabled ? 'Disabled' : 'Enabled'}`);
+          tray.setContextMenu(buildTrayMenu());
         });
-        
+
         console.log('[Main] Tray created successfully');
     } catch (err) {
         console.error('[Main] FAILED to create Tray:', err);
@@ -1209,33 +1450,11 @@ if (!gotTheLock) {
 
     registerGlobalShortcut(globalHotkey);
 
-    // 启动鼠标中键监听 (仅Windows)
-    if (process.platform === 'win32') {
-      try {
-        console.log('Starting MouseHook:', mouseHookPath);
-        mouseHookProc = spawn(mouseHookPath);
-
-        mouseHookProc.stdout.on('data', (data) => {
-          const msg = data.toString().trim();
-          if (msg.includes('MIDDLE_CLICK')) {
-            console.log('Middle Click Detected');
-            activateApp();
-          }
-        });
-
-        mouseHookProc.on('error', (err) => {
-          console.error('MouseHook Error:', err);
-        });
-
-        mouseHookProc.on('close', (code) => {
-           console.log('MouseHook exited with code:', code);
-        });
-
-      } catch (e) {
-        console.error('Failed to start MouseHook:', e);
-      }
+    // 启动鼠标中键监听 (仅Windows且启用时)
+    if (process.platform === 'win32' && middleClickEnabled) {
+      startMouseHook();
     } else {
-      console.log('[Main] MouseHook skipped on non-Windows platform');
+      console.log('[Main] MouseHook skipped:', process.platform !== 'win32' ? 'non-Windows platform' : 'disabled by user');
     }
 
     app.on('activate', () => {
@@ -1254,7 +1473,5 @@ app.on('window-all-closed', () => {
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
-  if (mouseHookProc) {
-    mouseHookProc.kill();
-  }
+  stopMouseHook();
 })

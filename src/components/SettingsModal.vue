@@ -123,6 +123,33 @@
             <el-switch v-model="startMinimized" @change="updateStartMinimized" />
           </div>
 
+          <div class="setting-row">
+            <span class="setting-label">中键唤醒 (仅Windows)</span>
+            <el-switch v-model="middleClickEnabled" @change="updateMiddleClick" />
+          </div>
+
+          <el-divider content-position="left">默认服务</el-divider>
+
+          <div class="setting-row">
+            <span class="setting-label">搜索引擎</span>
+            <el-select v-model="localSettings.searchEngine" size="small" @change="handleSettingChange">
+              <el-option value="google" label="Google" />
+              <el-option value="baidu" label="百度" />
+              <el-option value="bing" label="Bing" />
+              <el-option value="duckduckgo" label="DuckDuckGo" />
+            </el-select>
+          </div>
+
+          <div class="setting-row">
+            <span class="setting-label">翻译服务</span>
+            <el-select v-model="localSettings.translateService" size="small" @change="handleSettingChange">
+              <el-option value="google" label="Google翻译" />
+              <el-option value="deepl" label="DeepL" />
+              <el-option value="baidu" label="百度翻译" />
+              <el-option value="youdao" label="有道翻译" />
+            </el-select>
+          </div>
+
           <el-divider />
 
           <div class="setting-row">
@@ -241,6 +268,7 @@ const secretValue = ref('');
 const secretKeys = ref([]);
 const startMinimized = ref(true);
 const autoStart = ref(false);
+const middleClickEnabled = ref(true);
 const hotkeyFocused = ref('');
 
 // 密码验证相关
@@ -337,6 +365,12 @@ const updateStartMinimized = () => {
 const updateAutoStart = () => {
   if (window.api) {
     window.api.send('set-auto-start', autoStart.value);
+  }
+};
+
+const updateMiddleClick = () => {
+  if (window.api) {
+    window.api.send('set-middle-click', middleClickEnabled.value);
   }
 };
 
@@ -466,9 +500,13 @@ onMounted(() => {
     window.api.on('auto-start-status', ({ enabled }) => {
       autoStart.value = enabled;
     });
+    window.api.on('middle-click-status', ({ enabled }) => {
+      middleClickEnabled.value = enabled;
+    });
     window.api.send('secret-action', { action: 'list' });
     window.api.send('config-action', { action: 'get', key: 'startMinimized' });
     window.api.send('get-auto-start');
+    window.api.send('get-middle-click');
   }
 });
 </script>

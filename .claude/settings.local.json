@@ -17,7 +17,14 @@
       "Bash(pkill:*)",
       "Bash(npm run dev:*)",
       "Bash(cat:*)",
-      "Bash(tasklist:*)"
+      "Bash(tasklist:*)",
+      "Bash(npm uninstall:*)",
+      "Bash(npx @electron/rebuild)",
+      "Bash(node create_icon.js:*)",
+      "Bash(powershell:*)",
+      "Bash(npm run build:win:portable:*)",
+      "Bash(npm run build:win:*)",
+      "Bash(dir \"C:\\\\workspace\\\\GeminiProjects\\\\QuickerUse\\\\release\\\\*.exe\")"
     ]
   }
 }
