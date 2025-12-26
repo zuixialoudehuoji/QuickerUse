@@ -81,16 +81,13 @@ export default {
     // --- 4. 时间戳识别 ---
     if (this.isTimestamp(trimmedText)) {
       actions.push({ label: '⏰ 转为日期时间', action: 'timestamp-convert', payload: trimmedText });
-    }
-
-    // --- 5. 汇率/单位 ---
-    if (this.isCurrency(trimmedText)) {
-       actions.push({ label: '💰 汇率换算', action: 'convert-currency', payload: trimmedText });
+    } else if (this.isDateString(trimmedText)) {
+      actions.push({ label: '📅 转为时间戳', action: 'to-timestamp', payload: trimmedText });
     }
 
     // --- 6. YAML 识别 (简易) ---
     if (this.isYaml(trimmedText)) {
-      actions.push({ label: '📋 YAML 转 JSON', action: 'yaml-to-json', payload: trimmedText });
+      actions.push({ label: '📋 YAML 处理', action: 'yaml-format', payload: trimmedText });
     }
 
     return actions;
@@ -121,11 +118,6 @@ export default {
     return text.includes(':') && !text.trim().startsWith('{') && text.includes('\n');
   },
 
-  /** 判断是否为金额 */
-  isCurrency(text) {
-    return /^\$?\d+(\.\d+)?$/.test(text) || /^\d+(\.\d+)?\s?(USD|CNY|JPY)$/i.test(text);
-  },
-
   /** 简单 YAML 转 JSON */
   processYamlToJson(text) {
     // 这里仅演示简单 KV 解析，生产环境应使用 js-yaml 库
@@ -137,14 +129,7 @@ export default {
         if(k && v) obj[k.trim()] = v.trim();
       });
       return JSON.stringify(obj, null, 2);
-    } catch(e) { return '转换失败'; }
-  },
-
-  /** 汇率转换 (演示) */
-  processCurrency(text) {
-    const num = parseFloat(text.replace(/[^\d.]/g, ''));
-    // 假设 1 USD = 7.15 CNY
-    return `¥ ${(num * 7.15).toFixed(2)} CNY`;
+    } catch(e) { return '转换失败: ' + e.message; }
   },
 
   /** 判断是否为 URL */
@@ -179,7 +164,31 @@ export default {
     return /^\d{10}$|^\d{13}$/.test(text);
   },
 
+  /** 判断是否为日期字符串 (简单判断) */
+  isDateString(text) {
+    return /^\d{4}[-/]\d{1,2}[-/]\d{1,2}/.test(text);
+  },
+
   // --- 具体的处理逻辑 (执行动作时调用) ---
+
+  /**
+   * 时间戳转日期
+   */
+  processTimestamp(text) {
+    const ts = parseInt(text);
+    const date = new Date(text.length === 10 ? ts * 1000 : ts);
+    if (isNaN(date.getTime())) return '无效时间戳';
+    return date.toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-');
+  },
+
+  /**
+   * 日期转时间戳
+   */
+  processToTimestamp(text) {
+    const date = new Date(text);
+    if (isNaN(date.getTime())) return '无效日期';
+    return date.getTime().toString();
+  },
 
   /**
    * 将多行文本转换为 SQL IN ('a', 'b') 格式

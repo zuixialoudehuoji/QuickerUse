@@ -3,27 +3,131 @@ const electron = require("electron");
 const path = require("path");
 const child_process = require("child_process");
 const fs = require("fs");
+const module$1 = require("module");
 const require$$0$1 = require("buffer");
 const require$$1$1 = require("string_decoder");
 const http = require("http");
 const os = require("os");
+const crypto = require("crypto");
+var _documentCurrentScript = typeof document !== "undefined" ? document.currentScript : null;
+const require$1 = module$1.createRequire(typeof document === "undefined" ? require("url").pathToFileURL(__filename).href : _documentCurrentScript && _documentCurrentScript.tagName.toUpperCase() === "SCRIPT" && _documentCurrentScript.src || new URL("index.js", document.baseURI).href);
+let robot = null;
+try {
+  robot = require$1("robotjs");
+  console.log("[SystemTools] robotjs loaded successfully");
+} catch (e) {
+  console.warn("[SystemTools] robotjs not available:", e.message);
+}
 function runPowershell(command) {
-  const psCommand = `powershell -NoProfile -ExecutionPolicy Bypass -Command "${command}"`;
-  child_process.exec(psCommand, (error, stdout, stderr) => {
-    if (error) {
-      console.error(`执行出错: ${error.message}`);
-      return;
-    }
-    if (stderr) {
-      console.error(`脚本错误: ${stderr}`);
-      return;
-    }
+  return new Promise((resolve, reject) => {
+    const psCommand = `powershell -NoProfile -ExecutionPolicy Bypass -Command "${command.replace(/"/g, '\\"')}"`;
+    child_process.exec(psCommand, { encoding: "utf8" }, (error, stdout, stderr) => {
+      if (error) {
+        console.error(`执行出错: ${error.message}`);
+        reject(error);
+        return;
+      }
+      if (stderr) {
+        console.error(`脚本错误: ${stderr}`);
+      }
+      resolve(stdout.trim());
+    });
   });
+}
+function runPowershellSync(command) {
+  try {
+    const psCommand = `powershell -NoProfile -ExecutionPolicy Bypass -Command "${command.replace(/"/g, '\\"')}"`;
+    return child_process.execSync(psCommand, { encoding: "utf8" }).trim();
+  } catch (e) {
+    console.error("PowerShell sync error:", e);
+    return null;
+  }
 }
 const systemTools = {
   /**
-   * 结束高占用进程 (示例：结束无响应的 Chrome 或 Node)
-   * 实际使用需谨慎，最好传入 PID
+   * 获取当前前台窗口句柄
+   * @returns {string|null} 窗口句柄
+   */
+  getForegroundWindow() {
+    if (process.platform !== "win32") return null;
+    const script = `
+      Add-Type @"
+      using System;
+      using System.Runtime.InteropServices;
+      public class Win32 {
+        [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+      }
+"@
+      [Win32]::GetForegroundWindow().ToInt64()
+    `;
+    try {
+      const result = runPowershellSync(script);
+      return result;
+    } catch (e) {
+      console.error("获取前台窗口失败:", e);
+      return null;
+    }
+  },
+  /**
+   * 通过句柄操作指定窗口
+   * @param {string} hwnd - 窗口句柄
+   * @param {string} action - 操作类型
+   */
+  windowActionByHandle(hwnd, action) {
+    if (process.platform !== "win32" || !hwnd) return;
+    const psScript = `
+      Add-Type -AssemblyName System.Windows.Forms
+      $code = @"
+      using System;
+      using System.Runtime.InteropServices;
+      public class Win32 {
+        [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+        [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr hWnd, int X, int Y, int nWidth, int nHeight, bool bRepaint);
+        [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+        [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+        public static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
+        public static readonly IntPtr HWND_NOTOPMOST = new IntPtr(-2);
+      }
+"@
+      Add-Type $code
+
+      $hwnd = [IntPtr]${hwnd}
+      $screen = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+      $w = $screen.Width
+      $h = $screen.Height
+
+      # 先激活窗口
+      [Win32]::SetForegroundWindow($hwnd)
+
+      if ("${action}" -eq "maximize" -or "${action}" -eq "full") {
+        [Win32]::ShowWindowAsync($hwnd, 3)  # SW_MAXIMIZE
+      }
+      elseif ("${action}" -eq "restore") {
+        [Win32]::ShowWindowAsync($hwnd, 9)  # SW_RESTORE
+      }
+      elseif ("${action}" -eq "left") {
+        [Win32]::ShowWindowAsync($hwnd, 9)
+        Start-Sleep -Milliseconds 50
+        [Win32]::MoveWindow($hwnd, 0, 0, $w/2, $h, $true)
+      }
+      elseif ("${action}" -eq "right") {
+        [Win32]::ShowWindowAsync($hwnd, 9)
+        Start-Sleep -Milliseconds 50
+        [Win32]::MoveWindow($hwnd, $w/2, 0, $w/2, $h, $true)
+      }
+      elseif ("${action}" -eq "pin") {
+        # 置顶窗口
+        [Win32]::SetWindowPos($hwnd, [Win32]::HWND_TOPMOST, 0, 0, 0, 0, 0x0003)
+      }
+      elseif ("${action}" -eq "unpin") {
+        # 取消置顶
+        [Win32]::SetWindowPos($hwnd, [Win32]::HWND_NOTOPMOST, 0, 0, 0, 0, 0x0003)
+      }
+    `;
+    runPowershell(psScript).catch((e) => console.error("窗口操作失败:", e));
+  },
+  /**
+   * 结束高占用进程
    */
   killProcess(processName) {
     const cmd = `taskkill /F /IM "${processName}.exe"`;
@@ -38,8 +142,7 @@ const systemTools = {
     return process.platform === "win32" ? "C:\\Windows\\System32\\drivers\\etc\\hosts" : "/etc/hosts";
   },
   /**
-   * 切换 Hosts (需要管理员权限运行 App)
-   * @param {string} content - 新的 Hosts 内容
+   * 切换 Hosts (需要管理员权限)
    */
   switchHosts(content) {
     const hostsPath = this.getHostsPath();
@@ -55,9 +158,7 @@ ${content}
     }
   },
   /**
-   * 模拟按键发送 (用于窗口控制)
-   * 依赖 Windows Script Host
-   * @param {string} keys - 按键代码 (如 "{LEFT}" 代表左箭头)
+   * 模拟按键发送
    */
   sendKeys(keys) {
     const psScript = `
@@ -67,35 +168,101 @@ ${content}
     runPowershell(psScript);
   },
   /**
-   * 窗口分屏控制 (Win + 方向键)
-   * 注意：SendWait 无法直接发送 Win 键。
-   * 替代方案：使用 PowerShell 调用 User32 API (较复杂) 或 简单的 Shell.Application
-   * 
-   * 简易版实现：这里演示控制 QuickerUse 自身的窗口位置，
-   * 如果要控制"其他"窗口，最佳方式是打包一个小的 .exe 工具或使用 python 脚本。
-   * 
-   * 为了不引入复杂依赖，我们暂时只实现 "QuickerUse 自身位置控制" 或者 "简单的最小化所有窗口"。
+   * 窗口分屏控制 (操作当前活动窗口)
    */
   windowAction(action) {
-    if (action === "minimize-all") {
-      const psScript = `(New-Object -ComObject Shell.Application).ToggleDesktop()`;
-      runPowershell(psScript);
+    const psScript = `
+      Add-Type -AssemblyName System.Windows.Forms
+      $code = @"
+      using System;
+      using System.Runtime.InteropServices;
+      public class Win32 {
+        [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+        [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+        [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr hWnd, int X, int Y, int nWidth, int nHeight, bool bRepaint);
+      }
+"@
+      Add-Type $code
+
+      $hwnd = [Win32]::GetForegroundWindow()
+      $screen = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+      $w = $screen.Width
+      $h = $screen.Height
+
+      if ("${action}" -eq "maximize") {
+        [Win32]::ShowWindowAsync($hwnd, 3)
+      }
+      elseif ("${action}" -eq "restore") {
+        [Win32]::ShowWindowAsync($hwnd, 9)
+      }
+      elseif ("${action}" -eq "left") {
+        [Win32]::ShowWindowAsync($hwnd, 9)
+        [Win32]::MoveWindow($hwnd, 0, 0, $w/2, $h, $true)
+      }
+      elseif ("${action}" -eq "right") {
+        [Win32]::ShowWindowAsync($hwnd, 9)
+        [Win32]::MoveWindow($hwnd, $w/2, 0, $w/2, $h, $true)
+      }
+      elseif ("${action}" -eq "minimize-all") {
+        (New-Object -ComObject Shell.Application).ToggleDesktop()
+      }
+    `;
+    runPowershell(psScript);
+  },
+  /**
+   * 激活指定窗口
+   * @param {string} hwnd - 窗口句柄
+   */
+  activateWindow(hwnd) {
+    if (process.platform !== "win32" || !hwnd) return;
+    try {
+      child_process.execSync(`powershell -NoProfile -Command "Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class W { [DllImport(\\"user32.dll\\")] public static extern bool SetForegroundWindow(IntPtr h); }'; [W]::SetForegroundWindow([IntPtr]${hwnd})"`, {
+        encoding: "utf8",
+        timeout: 500,
+        windowsHide: true
+      });
+    } catch (e) {
     }
   },
   /**
-   * 模拟 Ctrl+C (复制) - 支持 Windows 和 macOS
+   * 模拟 Ctrl+C (复制) - 使用 robotjs（超快）
+   * @param {boolean} fromHotkey - 是否从快捷键触发（需要额外处理）
    */
-  simulateCopy() {
+  simulateCopy(fromHotkey = false) {
     if (process.platform === "win32") {
-      const psScript = `
-        Add-Type -AssemblyName System.Windows.Forms
-        [System.Windows.Forms.SendKeys]::SendWait('^c')
-      `;
-      runPowershell(psScript);
+      if (robot) {
+        try {
+          robot.keyToggle("alt", "up");
+          robot.keyToggle("shift", "up");
+          robot.keyToggle("control", "up");
+          if (fromHotkey) {
+            robot.keyTap("escape");
+            const start = Date.now();
+            while (Date.now() - start < 30) {
+            }
+          }
+          robot.keyTap("c", "control");
+          return;
+        } catch (e) {
+          console.error("robotjs error:", e.message);
+        }
+      }
+      try {
+        child_process.execSync(`powershell -NoProfile -Command "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('^c')"`, {
+          encoding: "utf8",
+          timeout: 1e3,
+          windowsHide: true
+        });
+      } catch (e) {
+      }
     } else if (process.platform === "darwin") {
-      child_process.exec(`osascript -e 'tell application "System Events" to keystroke "c" using {command down}'`, (err) => {
-        if (err) console.error("Mac 复制失败:", err);
-      });
+      if (robot) {
+        try {
+          robot.keyTap("c", "command");
+          return;
+        } catch (e) {
+        }
+      }
     }
   },
   /**
@@ -109,6 +276,30 @@ ${content}
    */
   emptyTrash() {
     runPowershell("Clear-RecycleBin -Force -ErrorAction SilentlyContinue");
+  },
+  /**
+   * 自动连点器
+   * @param {number} interval - 点击间隔(毫秒)
+   * @param {number} count - 点击次数
+   */
+  autoClicker(interval = 100, count = 10) {
+    const psScript = `
+      Add-Type @"
+      using System;
+      using System.Runtime.InteropServices;
+      public class Mouse {
+        [DllImport("user32.dll")] public static extern void mouse_event(int dwFlags, int dx, int dy, int dwData, int dwExtraInfo);
+        public const int MOUSEEVENTF_LEFTDOWN = 0x02;
+        public const int MOUSEEVENTF_LEFTUP = 0x04;
+      }
+"@
+      for ($i = 0; $i -lt ${count}; $i++) {
+        [Mouse]::mouse_event([Mouse]::MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+        [Mouse]::mouse_event([Mouse]::MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+        Start-Sleep -Milliseconds ${interval}
+      }
+    `;
+    runPowershell(psScript);
   }
 };
 function getDefaultExportFromCjs(x) {
@@ -11021,73 +11212,190 @@ const fileServer = {
   }
 };
 const SECRETS_FILE = path.join(electron.app.getPath("userData"), "secrets.json");
+const APP_PIN_FILE = path.join(electron.app.getPath("userData"), "app-pin.json");
 let secretsCache = {};
+let authCache = {
+  verified: false,
+  expireAt: 0
+};
+const AUTH_CACHE_DURATION = 5 * 60 * 1e3;
+const FALLBACK_KEY = crypto.createHash("sha256").update(electron.app.getPath("userData")).digest();
+function fallbackEncrypt(text) {
+  const iv = crypto.randomBytes(16);
+  const cipher = crypto.createCipheriv("aes-256-cbc", FALLBACK_KEY, iv);
+  let encrypted = cipher.update(text, "utf8", "hex");
+  encrypted += cipher.final("hex");
+  return iv.toString("hex") + ":" + encrypted;
+}
+function fallbackDecrypt(encryptedText) {
+  const [ivHex, encrypted] = encryptedText.split(":");
+  const iv = Buffer.from(ivHex, "hex");
+  const decipher = crypto.createDecipheriv("aes-256-cbc", FALLBACK_KEY, iv);
+  let decrypted = decipher.update(encrypted, "hex", "utf8");
+  decrypted += decipher.final("utf8");
+  return decrypted;
+}
+function isSafeStorageAvailable() {
+  try {
+    return electron.safeStorage.isEncryptionAvailable();
+  } catch (e) {
+    return false;
+  }
+}
+function getAppPinHash() {
+  try {
+    if (fs.existsSync(APP_PIN_FILE)) {
+      const data = JSON.parse(fs.readFileSync(APP_PIN_FILE, "utf-8"));
+      return data.pinHash;
+    }
+  } catch (e) {
+    console.error("读取 PIN 失败:", e);
+  }
+  return null;
+}
+function setAppPin(pin) {
+  try {
+    const pinHash = crypto.createHash("sha256").update(pin).digest("hex");
+    fs.writeFileSync(APP_PIN_FILE, JSON.stringify({ pinHash }));
+    return true;
+  } catch (e) {
+    console.error("保存 PIN 失败:", e);
+    return false;
+  }
+}
+function verifyAppPin(pin) {
+  const storedHash = getAppPinHash();
+  if (!storedHash) {
+    return setAppPin(pin);
+  }
+  const inputHash = crypto.createHash("sha256").update(pin).digest("hex");
+  return storedHash === inputHash;
+}
+function hasAppPin() {
+  return getAppPinHash() !== null;
+}
 function loadSecrets() {
   if (!fs.existsSync(SECRETS_FILE)) return;
   try {
     const rawData = JSON.parse(fs.readFileSync(SECRETS_FILE, "utf-8"));
-    if (!electron.safeStorage.isEncryptionAvailable()) {
-      console.warn("SafeStorage 加密不可用，无法解密数据");
-      return;
-    }
-    for (const [key2, hexStr] of Object.entries(rawData)) {
+    const useSafeStorage = isSafeStorageAvailable();
+    for (const [key2, data] of Object.entries(rawData)) {
       try {
-        const buffer2 = Buffer.from(hexStr, "hex");
-        const decrypted = electron.safeStorage.decryptString(buffer2);
-        secretsCache[key2] = decrypted;
+        if (typeof data === "object" && data.fallback) {
+          secretsCache[key2] = fallbackDecrypt(data.value);
+        } else if (useSafeStorage) {
+          const buffer2 = Buffer.from(data, "hex");
+          secretsCache[key2] = electron.safeStorage.decryptString(buffer2);
+        } else {
+          if (typeof data === "string" && data.includes(":")) {
+            secretsCache[key2] = fallbackDecrypt(data);
+          }
+        }
       } catch (e) {
-        console.error(`解密 key [${key2}] 失败:`, e);
+        console.error(`解密 key [${key2}] 失败:`, e.message);
       }
     }
+    console.log("[SecretManager] 已加载密钥数量:", Object.keys(secretsCache).length);
   } catch (e) {
     console.error("加载密钥文件失败:", e);
   }
 }
 function saveSecrets() {
-  if (!electron.safeStorage.isEncryptionAvailable()) {
-    console.error("SafeStorage 加密不可用，无法保存");
-    return false;
-  }
+  const useSafeStorage = isSafeStorageAvailable();
   const encryptedData = {};
   for (const [key2, plainText] of Object.entries(secretsCache)) {
     try {
-      const buffer2 = electron.safeStorage.encryptString(plainText);
-      encryptedData[key2] = buffer2.toString("hex");
+      if (useSafeStorage) {
+        const buffer2 = electron.safeStorage.encryptString(plainText);
+        encryptedData[key2] = buffer2.toString("hex");
+      } else {
+        encryptedData[key2] = { fallback: true, value: fallbackEncrypt(plainText) };
+      }
     } catch (e) {
       console.error(`加密 key [${key2}] 失败:`, e);
     }
   }
   try {
     fs.writeFileSync(SECRETS_FILE, JSON.stringify(encryptedData, null, 2));
+    console.log("[SecretManager] 密钥已保存", useSafeStorage ? "(SafeStorage)" : "(Fallback)");
     return true;
   } catch (e) {
     console.error("写入密钥文件失败:", e);
     return false;
   }
 }
-loadSecrets();
+function isAuthenticated() {
+  if (authCache.verified && Date.now() < authCache.expireAt) {
+    return true;
+  }
+  authCache.verified = false;
+  return false;
+}
+function clearAuth() {
+  authCache.verified = false;
+  authCache.expireAt = 0;
+}
+let loaded = false;
+function ensureLoaded() {
+  if (!loaded) {
+    loadSecrets();
+    loaded = true;
+  }
+}
 const secretManager = {
-  /** 设置/更新密码 */
+  /** 验证 PIN 码（使用应用自定义 PIN，非 Windows PIN） */
+  async verifyPassword(pin) {
+    const result = verifyAppPin(pin);
+    if (result) {
+      authCache.verified = true;
+      authCache.expireAt = Date.now() + AUTH_CACHE_DURATION;
+    }
+    return result;
+  },
+  /** 检查是否已设置 PIN */
+  hasPin() {
+    return hasAppPin();
+  },
+  /** 检查是否已验证 */
+  isAuthenticated() {
+    return isAuthenticated();
+  },
+  /** 清除验证状态 */
+  clearAuth() {
+    clearAuth();
+  },
+  /** 设置/更新密码 (需要验证) */
   setItem(key2, value) {
+    ensureLoaded();
     secretsCache[key2] = value;
     return saveSecrets();
   },
-  /** 获取密码 */
+  /** 获取密码 (需要验证) */
   getItem(key2) {
+    ensureLoaded();
+    if (!isAuthenticated()) {
+      return null;
+    }
     return secretsCache[key2] || null;
   },
   /** 删除密码 */
   removeItem(key2) {
+    ensureLoaded();
     delete secretsCache[key2];
     return saveSecrets();
   },
   /** 获取所有 Key (不含密码明文) */
   getAllKeys() {
+    ensureLoaded();
     return Object.keys(secretsCache);
   },
   /** 检查是否可用 */
   isAvailable() {
-    return electron.safeStorage.isEncryptionAvailable();
+    return true;
+  },
+  /** 初始化 */
+  init() {
+    ensureLoaded();
   }
 };
 const CONFIG_FILE = path.join(electron.app.getPath("userData"), "config.json");
@@ -11134,6 +11442,7 @@ let globalHotkey = "Alt+Space";
 let mouseHookProc = null;
 let normalIconImage = null;
 let disabledIconImage = null;
+let lastActiveWindowHandle = null;
 const isDev = process.env.NODE_ENV === "development";
 const mouseHookPath = path.join(__dirname, "../../resources/MouseHook.exe");
 function updateTrayIcon() {
@@ -11143,61 +11452,139 @@ function updateTrayIcon() {
     tray.setToolTip(isAppDisabled ? "QuickerUse (已禁用)" : "QuickerUse");
   }
 }
-function activateApp(targetAction = null) {
+function activateApp(targetAction = null, fromHotkey = false) {
   if (isAppDisabled) return;
   if (!targetAction && mainWindow && mainWindow.isVisible() && mainWindow.isFocused()) {
     mainWindow.hide();
     return;
   }
   const originalText = electron.clipboard.readText();
+  console.log("========== 唤醒 ==========");
+  console.log("[1] 原始剪贴板内容:");
+  console.log(originalText || "(空)");
+  console.log("[1] 原始剪贴板长度:", originalText ? originalText.length : 0);
   electron.clipboard.clear();
-  systemTools.simulateCopy();
-  setTimeout(() => {
-    let selectedText = electron.clipboard.readText();
-    if (!selectedText) {
+  systemTools.simulateCopy(fromHotkey);
+  let selectedText = "";
+  const start = Date.now();
+  while (Date.now() - start < 80) {
+    const currentClip = electron.clipboard.readText();
+    if (currentClip) {
+      selectedText = currentClip;
+      break;
+    }
+  }
+  console.log("[2] Ctrl+C后获取:");
+  console.log(selectedText || "(无)");
+  console.log("[2] 获取长度:", selectedText ? selectedText.length : 0);
+  lastActiveWindowHandle = systemTools.getForegroundWindow();
+  let finalText = "";
+  const isLineCopy = selectedText && (selectedText.endsWith("\n") || selectedText.endsWith("\r\n") || selectedText.endsWith("\r"));
+  const isSingleLineCopy = isLineCopy && !selectedText.trim().includes("\n");
+  const isSameAsOriginal = selectedText && originalText && selectedText === originalText;
+  console.log("[3] 是否整行复制:", isLineCopy, "单行:", isSingleLineCopy, "与原相同:", isSameAsOriginal);
+  if (selectedText && selectedText.trim() && !isSingleLineCopy && !isSameAsOriginal) {
+    finalText = selectedText;
+    console.log("[结果] => 使用选中内容");
+  } else {
+    if (originalText) {
       electron.clipboard.writeText(originalText);
-      selectedText = "";
     }
-    if (mainWindow && mainWindow.isMinimized()) mainWindow.restore();
-    if (targetAction && mainWindow) {
-      mainWindow.webContents.send("trigger-smart-action", { action: targetAction, text: selectedText });
-    } else if (mainWindow) {
-      const { x, y } = electron.screen.getCursorScreenPoint();
-      const [winW, winH] = mainWindow.getSize();
-      const winX = x - Math.round(winW / 2);
-      const winY = y;
-      mainWindow.setPosition(winX, winY);
-      mainWindow.show();
-      mainWindow.setAlwaysOnTop(true);
-      mainWindow.setAlwaysOnTop(false);
-      mainWindow.focus();
-      mainWindow.webContents.send("clipboard-data", selectedText);
+    finalText = originalText || "";
+    console.log("[结果] => 恢复原剪贴板，传递完整内容");
+  }
+  console.log("==========================");
+  if (mainWindow && mainWindow.isMinimized()) mainWindow.restore();
+  if (targetAction && mainWindow) {
+    mainWindow.webContents.send("trigger-smart-action", { action: targetAction, text: finalText });
+  } else if (mainWindow) {
+    const cursorPoint = electron.screen.getCursorScreenPoint();
+    const currentDisplay = electron.screen.getDisplayNearestPoint(cursorPoint);
+    const workArea = currentDisplay.workArea;
+    const [winW, winH] = mainWindow.getSize();
+    let winX = cursorPoint.x - Math.round(winW / 2);
+    let winY = cursorPoint.y;
+    if (winX < workArea.x) winX = workArea.x;
+    if (winX + winW > workArea.x + workArea.width) winX = workArea.x + workArea.width - winW;
+    if (winY < workArea.y) winY = workArea.y;
+    if (winY + winH > workArea.y + workArea.height) {
+      winY = cursorPoint.y - winH - 10;
+      if (winY < workArea.y) winY = workArea.y;
     }
-  }, 200);
+    mainWindow.setPosition(winX, winY);
+    mainWindow.show();
+    mainWindow.setAlwaysOnTop(true);
+    mainWindow.setAlwaysOnTop(false);
+    mainWindow.focus();
+    mainWindow.webContents.send("clipboard-data", finalText);
+  }
 }
 function registerGlobalShortcut(shortcut) {
   electron.globalShortcut.unregisterAll();
-  const ret = electron.globalShortcut.register(shortcut, () => {
-    activateApp();
-  });
-  registerSmartHotkeys();
-  if (!ret) {
-    console.error(`${shortcut} 注册失败! 可能被其他软件占用。`);
-  } else {
-    console.log(`${shortcut} 注册成功`);
+  if (!shortcut) {
+    console.warn("Attempted to register empty shortcut, using default Alt+Space");
+    shortcut = "Alt+Space";
+  }
+  try {
+    const ret = electron.globalShortcut.register(shortcut, () => {
+      setTimeout(() => {
+        activateApp(null, true);
+      }, 100);
+    });
+    registerSmartHotkeys();
+    registerCustomHotkeys();
+    if (!ret) {
+      console.error(`${shortcut} 注册失败! 可能被其他软件占用。`);
+    } else {
+      console.log(`${shortcut} 注册成功`);
+    }
+  } catch (e) {
+    console.error(`Register shortcut [${shortcut}] error:`, e);
   }
 }
 let cachedSmartHotkeys = {};
+let cachedCustomHotkeys = {};
 function registerSmartHotkeys() {
   for (const [action, key2] of Object.entries(cachedSmartHotkeys)) {
     if (!key2) continue;
     try {
       electron.globalShortcut.register(key2, () => {
-        console.log(`Smart Hotkey Triggered: ${action}`);
-        activateApp(action);
+        setTimeout(() => {
+          activateApp(action, true);
+        }, 100);
       });
     } catch (e) {
       console.error(`Failed to register ${key2} for ${action}`);
+    }
+  }
+}
+function registerCustomHotkeys() {
+  for (const [id, data] of Object.entries(cachedCustomHotkeys)) {
+    if (!data.hotkey) continue;
+    try {
+      electron.globalShortcut.register(data.hotkey, () => {
+        const tool = data.tool;
+        if (tool.type === "file" && tool.path) {
+          if (tool.path.startsWith("http")) {
+            electron.shell.openExternal(tool.path);
+          } else if (tool.isAdmin && process.platform === "win32") {
+            const { exec } = require("child_process");
+            const cmd = `powershell -Command "Start-Process '${tool.path}' -Verb RunAs"`;
+            exec(cmd, (err) => {
+              if (err) console.error("Admin Run Error:", err);
+            });
+          } else {
+            electron.shell.openPath(tool.path);
+          }
+        } else if (tool.type === "builtin" && tool.action) {
+          setTimeout(() => {
+            activateApp(tool.action, true);
+          }, 100);
+        }
+      });
+      console.log(`Registered custom hotkey: ${data.hotkey} for ${data.tool.label}`);
+    } catch (e) {
+      console.error(`Failed to register custom hotkey ${data.hotkey}:`, e);
     }
   }
 }
@@ -11206,7 +11593,7 @@ async function createWindow() {
   const { width, height } = primaryDisplay.workAreaSize;
   mainWindow = new electron.BrowserWindow({
     width: 320,
-    height: 665,
+    height: 600,
     frame: false,
     transparent: false,
     backgroundColor: "#1e1e1e",
@@ -11239,16 +11626,36 @@ async function createWindow() {
   }
   mainWindow.on("ready-to-show", () => {
     const startMinimized = configManager.get("startMinimized");
+    const loginSettings = electron.app.getLoginItemSettings();
     if (startMinimized === false) {
       mainWindow.show();
     }
+    if (loginSettings.openAtLogin && startMinimized !== false) {
+      const notification = new electron.Notification({
+        title: "QuickerUse",
+        body: "启动成功，按 Alt+Space 唤醒",
+        silent: true
+      });
+      notification.show();
+      setTimeout(() => {
+        notification.close();
+      }, 2e3);
+    }
   });
   electron.ipcMain.on("update-global-hotkey", (event, newHotkey) => {
-    globalHotkey = newHotkey;
-    registerGlobalShortcut(globalHotkey);
+    if (newHotkey && typeof newHotkey === "string") {
+      globalHotkey = newHotkey;
+      registerGlobalShortcut(globalHotkey);
+    } else {
+      console.warn("Received invalid global hotkey:", newHotkey);
+    }
   });
   electron.ipcMain.on("update-smart-hotkeys", (event, hotkeys) => {
     cachedSmartHotkeys = hotkeys;
+    registerGlobalShortcut(globalHotkey);
+  });
+  electron.ipcMain.on("update-custom-hotkeys", (event, hotkeys) => {
+    cachedCustomHotkeys = hotkeys;
     registerGlobalShortcut(globalHotkey);
   });
   electron.ipcMain.on("run-path", async (event, payload) => {
@@ -11271,60 +11678,95 @@ async function createWindow() {
       console.error("Run path error:", e);
     }
   });
-  electron.ipcMain.on("get-file-icon", async (event, path2) => {
+  electron.ipcMain.on("get-file-icon", async (event, filePath) => {
+    console.log("[Main] Getting icon for:", filePath);
     try {
-      const icon = await electron.app.getFileIcon(path2, { size: "normal" });
-      event.reply("file-icon-data", { path: path2, icon: icon.toDataURL() });
+      let targetPath = filePath;
+      if (filePath.toLowerCase().endsWith(".lnk")) {
+        try {
+          const { execSync } = require("child_process");
+          const psCommand = `(New-Object -ComObject WScript.Shell).CreateShortcut('${filePath.replace(/'/g, "''")}').TargetPath`;
+          const result = execSync(`powershell -Command "${psCommand}"`, { encoding: "utf8" });
+          const target = result.trim();
+          if (target && fs.existsSync(target)) {
+            targetPath = target;
+            console.log("[Main] Shortcut target:", targetPath);
+          }
+        } catch (e) {
+          console.log("[Main] PowerShell failed:", e.message);
+        }
+      }
+      let icon = await electron.app.getFileIcon(targetPath, { size: "large" });
+      let iconDataUrl = icon.toDataURL();
+      if (!iconDataUrl || iconDataUrl.length < 100) {
+        icon = await electron.app.getFileIcon(targetPath, { size: "normal" });
+        iconDataUrl = icon.toDataURL();
+      }
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send("file-icon-data", {
+          path: filePath,
+          icon: iconDataUrl && iconDataUrl.length > 100 ? iconDataUrl : null
+        });
+      }
     } catch (e) {
-      console.error("Failed to get icon:", e);
-      event.reply("file-icon-data", { path: path2, icon: null });
+      console.error("[Main] Failed to get icon:", e);
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send("file-icon-data", { path: filePath, icon: null });
+      }
     }
   });
   electron.ipcMain.on("window-control", (event, { action }) => {
-    if (!mainWindow) return;
-    const { width: screenW, height: screenH } = electron.screen.getPrimaryDisplay().workAreaSize;
-    switch (action) {
-      case "left":
-        mainWindow.setBounds({ x: 0, y: 0, width: Math.round(screenW / 2), height: screenH });
-        break;
-      case "right":
-        mainWindow.setBounds({ x: Math.round(screenW / 2), y: 0, width: Math.round(screenW / 2), height: screenH });
-        break;
-      case "full":
-        mainWindow.maximize();
-        break;
-      case "center":
-        mainWindow.setSize(320, 650);
-        mainWindow.center();
-        break;
-      case "pin":
-        mainWindow.setAlwaysOnTop(!mainWindow.isAlwaysOnTop());
-        break;
-      case "minimize":
-        mainWindow.minimize();
-        break;
-      case "hide":
-        mainWindow.hide();
-        break;
-    }
+    if (mainWindow) mainWindow.hide();
+    setTimeout(() => {
+      if (lastActiveWindowHandle) {
+        systemTools.windowActionByHandle(lastActiveWindowHandle, action);
+      } else {
+        systemTools.windowAction(action);
+      }
+    }, 100);
   });
-  electron.ipcMain.on("system-action", (event, action) => {
+  electron.ipcMain.on("system-action", (event, args) => {
+    const action = typeof args === "string" ? args : args.action;
     if (action === "lock-screen") systemTools.lockScreen();
     if (action === "empty-trash") systemTools.emptyTrash();
     if (action === "minimize-all") systemTools.windowAction("minimize-all");
     if (action === "kill-process") systemTools.killProcess("notepad");
     if (action === "switch-hosts") systemTools.switchHosts("127.0.0.1 quicker.local");
+    if (action === "auto-clicker") {
+      const interval = args.interval || 100;
+      const count = args.count || 10;
+      systemTools.autoClicker(interval, count);
+    }
   });
   electron.ipcMain.on("script-action", (event, args) => {
     if (args.action === "get-list") event.reply("script-list", scriptManager.getScripts());
     if (args.action === "run") scriptManager.runScript(args.payload);
     if (args.action === "open-folder") scriptManager.openFolder();
   });
-  electron.ipcMain.on("secret-action", (event, args) => {
-    if (args.action === "list") event.reply("secret-list", secretManager.getAllKeys());
-    if (args.action === "get") event.reply("secret-value", { key: args.key, value: secretManager.getItem(args.key) });
-    if (args.action === "set") secretManager.setItem(args.key, args.value) && event.reply("secret-op-result", { success: true });
-    if (args.action === "delete") secretManager.removeItem(args.key) && event.reply("secret-op-result", { success: true });
+  electron.ipcMain.on("secret-action", async (event, args) => {
+    if (args.action === "list") {
+      event.reply("secret-list", secretManager.getAllKeys());
+    } else if (args.action === "check-auth") {
+      event.reply("secret-auth-status", {
+        authenticated: secretManager.isAuthenticated(),
+        hasPin: secretManager.hasPin()
+      });
+    } else if (args.action === "verify") {
+      const result = await secretManager.verifyPassword(args.password);
+      event.reply("secret-verify-result", { success: result, isNewPin: !secretManager.hasPin() });
+    } else if (args.action === "clear-auth") {
+      secretManager.clearAuth();
+      event.reply("secret-auth-status", { authenticated: false, hasPin: secretManager.hasPin() });
+    } else if (args.action === "get") {
+      const value = secretManager.getItem(args.key);
+      event.reply("secret-value", { key: args.key, value, needAuth: value === null && !secretManager.isAuthenticated() });
+    } else if (args.action === "set") {
+      secretManager.setItem(args.key, args.value);
+      event.reply("secret-op-result", { success: true });
+    } else if (args.action === "delete") {
+      secretManager.removeItem(args.key);
+      event.reply("secret-op-result", { success: true });
+    }
   });
   electron.ipcMain.on("file-server-action", (event, args) => {
     if (args.action === "start") event.reply("file-server-url", fileServer.startShare(args.payload));
@@ -11337,9 +11779,613 @@ async function createWindow() {
       event.reply("config-data", configManager.getAll());
     }
   });
-  electron.ipcMain.on("open-image-window", (event, url) => {
-    let win = new electron.BrowserWindow({ width: 400, height: 300, frame: false, alwaysOnTop: true, webPreferences: { nodeIntegration: false } });
-    win.loadURL(`data:text/html,<style>body{margin:0;background:black;display:flex;justify-content:center;align-items:center;height:100vh}img{max-width:100%;max-height:100%}</style><img src="${url}">`);
+  electron.ipcMain.on("open-image-window", (event, base64Data) => {
+    let imgWin = new electron.BrowserWindow({
+      width: 400,
+      height: 300,
+      frame: false,
+      alwaysOnTop: true,
+      transparent: true,
+      resizable: true,
+      skipTaskbar: true,
+      hasShadow: false,
+      webPreferences: {
+        nodeIntegration: true,
+        contextIsolation: false
+      }
+    });
+    const htmlContent = `
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%; height: 100%;
+      background: transparent;
+      overflow: hidden;
+      -webkit-app-region: drag;
+    }
+    .container {
+      width: 100%; height: 100%;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      position: relative;
+      padding: 8px;
+    }
+    img {
+      max-width: 100%;
+      max-height: 100%;
+      border-radius: 4px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+      pointer-events: none;
+    }
+    .close-btn {
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 28px;
+      height: 28px;
+      background: rgba(220,53,69,0.9);
+      border: none;
+      border-radius: 0 0 0 8px;
+      color: white;
+      font-size: 18px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 10;
+      -webkit-app-region: no-drag;
+    }
+    .close-btn:hover { background: #c82333; }
+    /* 调整大小的角 */
+    .resize-handle {
+      position: absolute;
+      bottom: 0;
+      right: 0;
+      width: 16px;
+      height: 16px;
+      cursor: se-resize;
+      -webkit-app-region: no-drag;
+      z-index: 10;
+    }
+    .resize-handle::after {
+      content: '';
+      position: absolute;
+      bottom: 2px;
+      right: 2px;
+      width: 10px;
+      height: 10px;
+      border-right: 2px solid rgba(255,255,255,0.6);
+      border-bottom: 2px solid rgba(255,255,255,0.6);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <img src="${base64Data}" />
+    <button class="close-btn" id="closeBtn">×</button>
+    <div class="resize-handle"></div>
+  </div>
+  <script>
+    const { ipcRenderer } = require('electron');
+
+    // 关闭按钮
+    document.getElementById('closeBtn').onclick = () => {
+      window.close();
+    };
+
+    // 键盘事件 - Esc 或 Q 关闭
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' || e.key === 'q' || e.key === 'Q') {
+        window.close();
+      }
+    });
+
+    // 确保窗口获得焦点
+    window.focus();
+  <\/script>
+</body>
+</html>`;
+    imgWin.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(htmlContent));
+    imgWin.once("ready-to-show", () => {
+      imgWin.focus();
+    });
+    imgWin.on("closed", () => {
+      imgWin = null;
+    });
+  });
+  let alarmWindow = null;
+  electron.ipcMain.on("show-alarm", (event, data) => {
+    if (alarmWindow && !alarmWindow.isDestroyed()) {
+      alarmWindow.close();
+    }
+    const primaryDisplay2 = electron.screen.getPrimaryDisplay();
+    const { width: screenWidth, height: screenHeight } = primaryDisplay2.workAreaSize;
+    const windowWidth = 360;
+    const windowHeight = 160;
+    alarmWindow = new electron.BrowserWindow({
+      width: windowWidth,
+      height: windowHeight,
+      x: Math.floor((screenWidth - windowWidth) / 2),
+      y: screenHeight - windowHeight - 20,
+      frame: false,
+      alwaysOnTop: true,
+      transparent: true,
+      resizable: false,
+      skipTaskbar: true,
+      hasShadow: true,
+      webPreferences: {
+        nodeIntegration: true,
+        contextIsolation: false
+      }
+    });
+    const { title = "倒计时结束", message = "时间到！", minutes = 0 } = data || {};
+    const htmlContent = `
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    @keyframes ring {
+      0%, 100% { transform: rotate(-15deg); }
+      50% { transform: rotate(15deg); }
+    }
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.05); }
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes bellShake {
+      0%, 100% { transform: rotate(0); }
+      10%, 30%, 50%, 70%, 90% { transform: rotate(-10deg); }
+      20%, 40%, 60%, 80% { transform: rotate(10deg); }
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%; height: 100%;
+      background: transparent;
+      font-family: 'Microsoft YaHei', 'Segoe UI', sans-serif;
+      overflow: hidden;
+    }
+    .container {
+      width: 100%; height: 100%;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border-radius: 16px;
+      padding: 20px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      animation: fadeIn 0.4s ease-out, pulse 2s ease-in-out infinite;
+      box-shadow: 0 8px 32px rgba(102, 126, 234, 0.4);
+      position: relative;
+      overflow: hidden;
+    }
+    .container::before {
+      content: '';
+      position: absolute;
+      top: -50%; left: -50%;
+      width: 200%; height: 200%;
+      background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%);
+      animation: pulse 3s ease-in-out infinite;
+    }
+    .alarm-icon {
+      width: 80px; height: 80px;
+      background: rgba(255,255,255,0.2);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      position: relative;
+      z-index: 1;
+    }
+    .clock-svg {
+      width: 50px; height: 50px;
+      animation: bellShake 0.5s ease-in-out infinite;
+    }
+    .content {
+      flex: 1;
+      color: white;
+      position: relative;
+      z-index: 1;
+    }
+    .title {
+      font-size: 18px;
+      font-weight: bold;
+      margin-bottom: 6px;
+      text-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
+    .message {
+      font-size: 14px;
+      opacity: 0.9;
+      margin-bottom: 10px;
+    }
+    .time-info {
+      font-size: 12px;
+      opacity: 0.7;
+    }
+    .close-btn {
+      position: absolute;
+      top: 10px; right: 10px;
+      width: 24px; height: 24px;
+      background: rgba(255,255,255,0.2);
+      border: none;
+      border-radius: 50%;
+      color: white;
+      font-size: 14px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s;
+      z-index: 10;
+    }
+    .close-btn:hover {
+      background: rgba(255,255,255,0.3);
+      transform: scale(1.1);
+    }
+    .dismiss-btn {
+      background: rgba(255,255,255,0.25);
+      border: none;
+      color: white;
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .dismiss-btn:hover {
+      background: rgba(255,255,255,0.35);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <button class="close-btn" onclick="window.close()">×</button>
+    <div class="alarm-icon">
+      <svg class="clock-svg" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="12" cy="13" r="8" stroke="white" stroke-width="2"/>
+        <path d="M12 9V13L15 15" stroke="white" stroke-width="2" stroke-linecap="round"/>
+        <path d="M5 3L8 6" stroke="white" stroke-width="2" stroke-linecap="round"/>
+        <path d="M19 3L16 6" stroke="white" stroke-width="2" stroke-linecap="round"/>
+        <circle cx="12" cy="13" r="1" fill="white"/>
+      </svg>
+    </div>
+    <div class="content">
+      <div class="title">${title}</div>
+      <div class="message">${message}</div>
+      <button class="dismiss-btn" onclick="window.close()">知道了</button>
+    </div>
+  </div>
+  <script>
+    // 播放提示音
+    try {
+      const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2teleQwTVLHh25htGgxBruLbkUoxD1y94tFSLxVQweLFQzsnY8nixDkxKXTO4rMsMTZ00OOrHTlFdNHkoh0wR4bU5pYcJ0KS1OaRHR40mN7kiR8gMZ/h5IQYH0Cu4N1qFy1ItuLWXBYjRsXizU0WJj3T4sU/Dzco4ebBOw0xLOXluzgOKTDq5bU4Ci0p7+WzNQgoLPLosS8EJzL16bEuAyYs+OqwLgMlK/vrrS0CIy3/7KwrACMr/+yrLAMjLP/sqyoAJC3/7KkpAiQv/+ynKAAkMv/tpSYAJTT/7qQlACY1/+6jJQAmN//uoSQAJzr/7p8jACc8/+6dIgAnPv/umyEAJ0D/7pkgACdC/+6YHwAoRP/ulR4AKEb/7pMdAChI/+2RHAAoSv/tjxsAKUz/7Y4aAClO/+2MGQApUP/tihgAKVL/7YkXAClU/+2HFgAqVv/thRUAKlj/7YMUACpa/+2BEwAqXP/sgBIAK17/7H4RACth/+x9EAArY//sexAAK2X/7HkPACtn/+x3DgAsaf/sdhAAAAA=');
+      audio.volume = 0.5;
+      audio.play().catch(() => {});
+    } catch(e) {}
+
+    // 10秒后自动关闭
+    setTimeout(() => window.close(), 10000);
+
+    // ESC关闭
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') window.close();
+    });
+
+    window.focus();
+  <\/script>
+</body>
+</html>`;
+    alarmWindow.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(htmlContent));
+    alarmWindow.once("ready-to-show", () => {
+      alarmWindow.focus();
+    });
+    alarmWindow.on("closed", () => {
+      alarmWindow = null;
+    });
+  });
+  electron.ipcMain.on("set-auto-start", (event, enabled) => {
+    electron.app.setLoginItemSettings({
+      openAtLogin: enabled,
+      path: process.execPath
+    });
+    console.log("[Main] Auto-start set to:", enabled);
+    event.reply("auto-start-status", { enabled });
+  });
+  electron.ipcMain.on("get-auto-start", (event) => {
+    const settings = electron.app.getLoginItemSettings();
+    event.reply("auto-start-status", { enabled: settings.openAtLogin });
+  });
+  electron.ipcMain.on("set-always-on-top", (event, pinned) => {
+    if (mainWindow) {
+      mainWindow.setAlwaysOnTop(pinned);
+      console.log("[Main] Always on top:", pinned);
+    }
+  });
+  electron.ipcMain.on("write-clipboard", (event, text) => {
+    electron.clipboard.writeText(text);
+  });
+  let colorPickerWindow = null;
+  electron.ipcMain.on("pick-color", async (event) => {
+    try {
+      if (colorPickerWindow && !colorPickerWindow.isDestroyed()) {
+        colorPickerWindow.close();
+      }
+      const primaryDisplay2 = electron.screen.getPrimaryDisplay();
+      const { width: width2, height: height2 } = primaryDisplay2.size;
+      const scaleFactor = primaryDisplay2.scaleFactor;
+      const { desktopCapturer } = require("electron");
+      const sources = await desktopCapturer.getSources({
+        types: ["screen"],
+        thumbnailSize: {
+          width: Math.floor(width2 * scaleFactor),
+          height: Math.floor(height2 * scaleFactor)
+        }
+      });
+      if (sources.length === 0) {
+        event.reply("color-picked", { success: false, error: "无法获取屏幕" });
+        return;
+      }
+      const screenshotDataUrl = sources[0].thumbnail.toDataURL();
+      colorPickerWindow = new electron.BrowserWindow({
+        x: 0,
+        y: 0,
+        width: width2,
+        height: height2,
+        frame: false,
+        transparent: true,
+        alwaysOnTop: true,
+        skipTaskbar: true,
+        resizable: false,
+        movable: false,
+        fullscreen: true,
+        webPreferences: {
+          nodeIntegration: true,
+          contextIsolation: false
+        }
+      });
+      const htmlContent = `
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100vw; height: 100vh;
+      background: transparent;
+      cursor: crosshair;
+      overflow: hidden;
+    }
+    #screenshot {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100vw;
+      height: 100vh;
+      object-fit: cover;
+      pointer-events: none;
+    }
+    .preview {
+      position: fixed;
+      width: 140px;
+      padding: 12px;
+      background: rgba(20, 20, 20, 0.95);
+      border: 2px solid #fff;
+      border-radius: 10px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+      pointer-events: none;
+      z-index: 9999;
+    }
+    .magnifier {
+      width: 116px;
+      height: 80px;
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 4px;
+      margin-bottom: 8px;
+      overflow: hidden;
+      image-rendering: pixelated;
+    }
+    .magnifier canvas {
+      width: 100%;
+      height: 100%;
+    }
+    .color-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
+    .color-box {
+      width: 24px;
+      height: 24px;
+      border-radius: 4px;
+      border: 2px solid #fff;
+      flex-shrink: 0;
+    }
+    .color-hex {
+      color: #fff;
+      font-family: Consolas, monospace;
+      font-size: 14px;
+      font-weight: bold;
+    }
+    .color-rgb {
+      color: #aaa;
+      font-family: Consolas, monospace;
+      font-size: 11px;
+    }
+    .hint {
+      position: fixed;
+      bottom: 30px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.85);
+      color: #fff;
+      padding: 12px 24px;
+      border-radius: 25px;
+      font-size: 14px;
+      font-family: 'Microsoft YaHei', sans-serif;
+    }
+  </style>
+</head>
+<body>
+  <img id="screenshot" />
+  <div class="preview" id="preview">
+    <div class="magnifier"><canvas id="magnifierCanvas" width="116" height="80"></canvas></div>
+    <div class="color-row">
+      <div class="color-box" id="colorBox"></div>
+      <div class="color-hex" id="colorHex">#FFFFFF</div>
+    </div>
+    <div class="color-rgb" id="colorRgb">RGB(255, 255, 255)</div>
+  </div>
+  <div class="hint">点击选取颜色 | ESC 取消</div>
+  <script>
+    const { ipcRenderer } = require('electron');
+    const screenshot = document.getElementById('screenshot');
+    const preview = document.getElementById('preview');
+    const colorBox = document.getElementById('colorBox');
+    const colorHex = document.getElementById('colorHex');
+    const colorRgb = document.getElementById('colorRgb');
+    const magnifierCanvas = document.getElementById('magnifierCanvas');
+    const magnifierCtx = magnifierCanvas.getContext('2d', { willReadFrequently: true });
+
+    let sourceCanvas, sourceCtx;
+    let imgWidth, imgHeight;
+    let isReady = false;
+    const screenWidth = ${width2};
+    const screenHeight = ${height2};
+
+    // 使用主进程传入的截图
+    const screenshotDataUrl = "${screenshotDataUrl.replace(/"/g, '\\"')}";
+
+    const img = new Image();
+    img.onload = () => {
+      imgWidth = img.width;
+      imgHeight = img.height;
+
+      sourceCanvas = document.createElement('canvas');
+      sourceCanvas.width = imgWidth;
+      sourceCanvas.height = imgHeight;
+      sourceCtx = sourceCanvas.getContext('2d', { willReadFrequently: true });
+      sourceCtx.drawImage(img, 0, 0);
+
+      screenshot.src = screenshotDataUrl;
+      isReady = true;
+
+      // 初始化预览位置
+      updatePreview(screenWidth / 2, screenHeight / 2);
+    };
+    img.src = screenshotDataUrl;
+
+    // 获取像素颜色
+    function getColorAt(clientX, clientY) {
+      if (!isReady || !sourceCtx) return { hex: '#000000', r: 0, g: 0, b: 0 };
+
+      const x = Math.floor((clientX / screenWidth) * imgWidth);
+      const y = Math.floor((clientY / screenHeight) * imgHeight);
+
+      if (x < 0 || y < 0 || x >= imgWidth || y >= imgHeight) {
+        return { hex: '#000000', r: 0, g: 0, b: 0 };
+      }
+
+      try {
+        const pixel = sourceCtx.getImageData(x, y, 1, 1).data;
+        const r = pixel[0], g = pixel[1], b = pixel[2];
+        const hex = '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0').toUpperCase()).join('');
+        return { hex, r, g, b };
+      } catch (e) {
+        return { hex: '#000000', r: 0, g: 0, b: 0 };
+      }
+    }
+
+    // 绘制放大镜
+    function drawMagnifier(clientX, clientY) {
+      if (!isReady || !sourceCtx) return;
+
+      const x = Math.floor((clientX / screenWidth) * imgWidth);
+      const y = Math.floor((clientY / screenHeight) * imgHeight);
+      const size = 11;
+      const half = Math.floor(size / 2);
+
+      magnifierCtx.imageSmoothingEnabled = false;
+      magnifierCtx.fillStyle = '#000';
+      magnifierCtx.fillRect(0, 0, 116, 80);
+
+      const srcX = Math.max(0, Math.min(x - half, imgWidth - size));
+      const srcY = Math.max(0, Math.min(y - half, imgHeight - size));
+
+      try {
+        magnifierCtx.drawImage(sourceCanvas, srcX, srcY, size, size, 0, 0, 116, 80);
+      } catch (e) {}
+
+      magnifierCtx.strokeStyle = 'rgba(255,255,255,0.8)';
+      magnifierCtx.lineWidth = 1;
+      magnifierCtx.beginPath();
+      magnifierCtx.moveTo(58, 30);
+      magnifierCtx.lineTo(58, 50);
+      magnifierCtx.moveTo(48, 40);
+      magnifierCtx.lineTo(68, 40);
+      magnifierCtx.stroke();
+    }
+
+    // 更新预览
+    function updatePreview(clientX, clientY) {
+      if (!isReady) return;
+
+      const color = getColorAt(clientX, clientY);
+      colorBox.style.backgroundColor = color.hex;
+      colorHex.textContent = color.hex;
+      colorRgb.textContent = 'RGB(' + color.r + ', ' + color.g + ', ' + color.b + ')';
+      drawMagnifier(clientX, clientY);
+
+      let left = clientX + 25;
+      let top = clientY + 25;
+      if (left + 160 > screenWidth) left = clientX - 165;
+      if (top + 160 > screenHeight) top = clientY - 165;
+      preview.style.left = left + 'px';
+      preview.style.top = top + 'px';
+    }
+
+    document.addEventListener('mousemove', (e) => {
+      updatePreview(e.clientX, e.clientY);
+    });
+
+    document.addEventListener('click', (e) => {
+      if (!isReady) return;
+      const color = getColorAt(e.clientX, e.clientY);
+      ipcRenderer.send('color-picked-result', { success: true, color: color.hex });
+      window.close();
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        ipcRenderer.send('color-picked-result', { success: false });
+        window.close();
+      }
+    });
+  <\/script>
+</body>
+</html>`;
+      colorPickerWindow.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(htmlContent));
+      colorPickerWindow.on("closed", () => {
+        colorPickerWindow = null;
+      });
+    } catch (e) {
+      console.error("[ColorPicker] Error:", e);
+      event.reply("color-picked", { success: false, error: e.message });
+    }
+  });
+  electron.ipcMain.on("color-picked-result", (event, result) => {
+    if (result.success && result.color) {
+      electron.clipboard.writeText(result.color);
+    }
+    if (mainWindow && mainWindow.webContents) {
+      mainWindow.webContents.send("color-picked", result);
+    }
   });
   electron.ipcMain.on("minimize-window", () => mainWindow.minimize());
   electron.ipcMain.on("close-window", () => electron.app.quit());
@@ -11357,6 +12403,7 @@ if (!gotTheLock) {
     }
   });
   electron.app.whenReady().then(() => {
+    secretManager.init();
     const projectRoot = path.join(__dirname, "../../");
     const resourceIconPath = path.join(projectRoot, "resources/icon-16.png");
     const resourceDisabledPath = path.join(projectRoot, "resources/icon-disabled-16.png");
