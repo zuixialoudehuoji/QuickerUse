@@ -2,9 +2,10 @@
   <el-dialog
     v-model="visible"
     title="设置"
-    width="90%"
+    width="320px"
     :close-on-click-modal="true"
     class="settings-dialog"
+    :fullscreen="true"
   >
     <el-tabs v-model="activeTab" class="settings-tabs">
       <!-- 外观设置 -->
@@ -71,7 +72,7 @@
               v-model="localSettings.globalHotkey"
               size="small"
               placeholder="点击后按键"
-              style="width: 120px;"
+              style="width: 100px;"
               readonly
               @keydown="captureGlobalHotkey"
               @focus="hotkeyFocused = 'global'"
@@ -85,7 +86,8 @@
             <el-switch v-model="localSettings.followMouse" @change="handleSettingChange" />
           </div>
 
-          <el-divider content-position="left">功能快捷键</el-divider>
+          <el-divider content-position="center">功能快捷键
+          </el-divider>
 
           <div class="hotkey-grid">
             <div class="hotkey-item" v-for="feature in allFeatures" :key="feature.action">
@@ -94,7 +96,7 @@
                 v-model="localHotkeys[feature.action]"
                 size="small"
                 placeholder="按键"
-                style="width: 110px;"
+                style="width: 90px;"
                 readonly
                 @keydown="(e) => captureFeatureHotkey(e, feature.action)"
                 @focus="hotkeyFocused = feature.action"
@@ -103,11 +105,15 @@
               />
             </div>
           </div>
-
           <div class="hotkey-hint">
-            点击输入框后按下快捷键组合，按 Esc 清除
+            点击输入框后按下快捷键组合，按 Esc/Delete/Backspace 清除
           </div>
         </div>
+      </el-tab-pane>
+
+      <!-- 轮盘菜单 -->
+      <el-tab-pane label="轮盘菜单" name="radial">
+        <RadialMenuSettings ref="radialSettingsRef" @save="onRadialSettingsSave" />
       </el-tab-pane>
 
       <!-- 数据管理 -->
@@ -128,8 +134,13 @@
             <el-switch v-model="middleClickEnabled" @change="updateMiddleClick" />
           </div>
 
-          <el-divider content-position="left">默认服务</el-divider>
-
+          <div class="setting-row">
+            <span class="setting-label">智能环境感知</span>
+            <el-switch v-model="envSensingEnabled" @change="updateEnvSensing" />
+          </div>
+          <div class="setting-hint">
+            根据当前使用的应用自动调整推荐功能顺序
+          </div>
           <div class="setting-row">
             <span class="setting-label">搜索引擎</span>
             <el-select v-model="localSettings.searchEngine" size="small" @change="handleSettingChange">
@@ -150,8 +161,6 @@
             </el-select>
           </div>
 
-          <el-divider />
-
           <div class="setting-row">
             <span class="setting-label">密钥管理</span>
             <el-button size="small" @click="showSecretManager = true">
@@ -163,7 +172,6 @@
           <el-divider />
 
           <div class="danger-zone">
-            <p class="danger-title">危险操作</p>
             <div class="danger-buttons">
               <el-button type="danger" size="small" @click="handleResetTools">
                 重置我的工具
@@ -248,6 +256,8 @@ import { ref, reactive, watch, onMounted } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { Key, Lock, CircleCheck } from '@element-plus/icons-vue';
 import { ALL_FEATURES, DEFAULT_SETTINGS } from '@/utils/constants';
+import * as envSensing from '@/utils/envSensing';
+import RadialMenuSettings from './RadialMenuSettings.vue';
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -255,12 +265,13 @@ const props = defineProps({
   hotkeys: { type: Object, default: () => ({}) }
 });
 
-const emit = defineEmits(['update:modelValue', 'settings-change', 'hotkeys-change', 'reset-tools', 'reset-all']);
+const emit = defineEmits(['update:modelValue', 'settings-change', 'hotkeys-change', 'reset-tools', 'reset-all', 'radial-settings-change']);
 
 const visible = ref(props.modelValue);
 const activeTab = ref('appearance');
 const localSettings = reactive({ ...DEFAULT_SETTINGS, ...props.settings });
 const localHotkeys = reactive({ ...props.hotkeys });
+const radialSettingsRef = ref(null);
 
 const showSecretManager = ref(false);
 const secretKey = ref('');
@@ -269,6 +280,7 @@ const secretKeys = ref([]);
 const startMinimized = ref(true);
 const autoStart = ref(false);
 const middleClickEnabled = ref(true);
+const envSensingEnabled = ref(envSensing.isEnabled());  // 环境感知开关
 const hotkeyFocused = ref('');
 
 // 密码验证相关
@@ -304,6 +316,11 @@ const handleHotkeyChange = () => {
   emit('hotkeys-change', { ...localHotkeys });
 };
 
+// 轮盘菜单设置保存
+const onRadialSettingsSave = (settings) => {
+  emit('radial-settings-change', settings);
+};
+
 // 捕获按键转换为热键字符串
 const keyToHotkeyString = (e) => {
   e.preventDefault();
@@ -335,6 +352,26 @@ const keyToHotkeyString = (e) => {
 };
 
 const captureGlobalHotkey = (e) => {
+  // Esc 键清除热键 (优先检查)
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    e.stopPropagation();
+    console.log('[Hotkey] Clearing global hotkey');
+    localSettings.globalHotkey = '';
+    handleSettingChange();
+    return;
+  }
+
+  // Delete/Backspace 键也可清除
+  if (e.key === 'Delete' || e.key === 'Backspace') {
+    e.preventDefault();
+    e.stopPropagation();
+    console.log('[Hotkey] Clearing global hotkey via Delete/Backspace');
+    localSettings.globalHotkey = '';
+    handleSettingChange();
+    return;
+  }
+
   const hotkey = keyToHotkeyString(e);
   if (hotkey) {
     localSettings.globalHotkey = hotkey;
@@ -343,14 +380,29 @@ const captureGlobalHotkey = (e) => {
 };
 
 const captureFeatureHotkey = (e, action) => {
-  const hotkey = keyToHotkeyString(e);
-  // Esc 键清除热键
+  // Esc 键清除热键 (优先检查)
   if (e.key === 'Escape') {
+    e.preventDefault();
+    e.stopPropagation();
+    console.log('[Hotkey] Clearing hotkey for:', action);
     localHotkeys[action] = '';
     handleHotkeyChange();
     return;
   }
+
+  // Delete/Backspace 键也可清除
+  if (e.key === 'Delete' || e.key === 'Backspace') {
+    e.preventDefault();
+    e.stopPropagation();
+    console.log('[Hotkey] Clearing hotkey via Delete/Backspace for:', action);
+    localHotkeys[action] = '';
+    handleHotkeyChange();
+    return;
+  }
+
+  const hotkey = keyToHotkeyString(e);
   if (hotkey) {
+    console.log('[Hotkey] Setting hotkey:', action, '->', hotkey);
     localHotkeys[action] = hotkey;
     handleHotkeyChange();
   }
@@ -372,6 +424,11 @@ const updateMiddleClick = () => {
   if (window.api) {
     window.api.send('set-middle-click', middleClickEnabled.value);
   }
+};
+
+// 更新环境感知开关
+const updateEnvSensing = () => {
+  envSensing.setEnabled(envSensingEnabled.value);
 };
 
 const handleResetTools = async () => {
@@ -514,69 +571,113 @@ onMounted(() => {
 <style scoped>
 .settings-dialog :deep(.el-dialog) {
   background: var(--modal-bg);
-  border: 1px solid var(--grid-line);
-  border-radius: 8px;
+  border: none;
+  border-radius: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
 }
 
 .settings-dialog :deep(.el-dialog__header) {
   border-bottom: 1px solid var(--grid-line);
-  padding: 12px 16px;
+  padding: 10px 14px;
+  flex-shrink: 0;
 }
 
 .settings-dialog :deep(.el-dialog__body) {
   padding: 0;
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-tabs {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 .settings-tabs :deep(.el-tabs__header) {
   margin: 0;
-  padding: 0 16px;
+  padding: 0 8px;
   background: rgba(0, 0, 0, 0.1);
+  flex-shrink: 0;
+}
+
+.settings-tabs :deep(.el-tabs__item) {
+  font-size: 12px;
+  padding: 0 10px;
+  height: 32px;
 }
 
 .settings-tabs :deep(.el-tabs__content) {
-  padding: 16px;
+  padding: 10px;
+  flex: 1;
+  overflow: hidden;
+}
+
+.settings-tabs :deep(.el-tab-pane) {
+  height: 100%;
+  overflow-y: auto;
+}
+
+.settings-tabs :deep(.el-tab-pane)::-webkit-scrollbar {
+  display: none;
 }
 
 .setting-group {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 10px;
 }
 
 .setting-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
 }
 
 .setting-label {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--text-color);
   flex-shrink: 0;
 }
 
+.setting-hint {
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-top: -8px;
+  padding-left: 4px;
+}
+
 .setting-row :deep(.el-slider) {
   flex: 1;
-  max-width: 150px;
+  max-width: 100px;
 }
 
 .hotkey-grid {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  max-height: 220px;
+  gap: 3px;
+  max-height: 295px;
   overflow-y: auto;
-  padding: 10px;
+  padding: 6px;
   background: rgba(0, 0, 0, 0.1);
   border-radius: 6px;
+}
+
+.hotkey-grid::-webkit-scrollbar {
+  display: none;
 }
 
 .hotkey-item {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 6px 8px;
+  padding: 4px 6px;
   background: rgba(255, 255, 255, 0.03);
   border-radius: 4px;
 }
@@ -597,8 +698,8 @@ onMounted(() => {
 }
 
 .hotkey-hint {
-  margin-top: 8px;
-  font-size: 10px;
+  margin-top: 4px;
+  font-size: 8px;
   color: var(--text-dim);
   text-align: center;
 }
@@ -645,8 +746,12 @@ onMounted(() => {
 .secret-list {
   border: 1px solid var(--grid-line);
   border-radius: 4px;
-  max-height: 200px;
+  max-height: 150px;
   overflow-y: auto;
+}
+
+.secret-list::-webkit-scrollbar {
+  display: none;
 }
 
 .secret-item {

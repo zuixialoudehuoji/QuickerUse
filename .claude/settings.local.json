@@ -24,7 +24,17 @@
       "Bash(powershell:*)",
       "Bash(npm run build:win:portable:*)",
       "Bash(npm run build:win:*)",
-      "Bash(dir \"C:\\\\workspace\\\\GeminiProjects\\\\QuickerUse\\\\release\\\\*.exe\")"
+      "Bash(dir \"C:\\\\workspace\\\\GeminiProjects\\\\QuickerUse\\\\release\\\\*.exe\")",
+      "Bash(timeout /t 8 /nobreak)",
+      "Bash(node:*)",
+      "Bash(del \"C:\\\\workspace\\\\GeminiProjects\\\\QuickerUse\\\\src\\\\utils\\\\snippets.js\")",
+      "Bash(dir /s /b \"%APPDATA%\\\\*clipboard-history*\")",
+      "Bash(dir \"%APPDATA%\\\\quicker-use\")",
+      "Bash(dir \"%APPDATA%\\\\QuickerUse\")",
+      "Bash(dir \"%APPDATA%\\\\Electron\")",
+      "Bash(timeout /t 3 /nobreak)",
+      "Bash(timeout /t 2 /nobreak)",
+      "Bash(\"C:\\\\Windows\\\\Microsoft.NET\\\\Framework64\\\\v4.0.30319\\\\csc.exe\" /out:MouseHook.exe /target:winexe /reference:System.Windows.Forms.dll MouseHook.cs)"
     ]
   }
 }

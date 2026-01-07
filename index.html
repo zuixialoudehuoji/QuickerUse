@@ -5,8 +5,8 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>QuickerUse</title>
-    <!-- 解决 Electron 内容安全策略 (CSP) 警告 -->
-    <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline' 'unsafe-eval';" />
+    <!-- 解决 Electron 内容安全策略 (CSP) - 允许 Tesseract.js CDN -->
+    <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com; worker-src 'self' blob: https://cdn.jsdelivr.net https://unpkg.com; child-src 'self' blob:; connect-src 'self' https: http: blob: data:;" />
   </head>
   <body>
     <div id="app"></div>

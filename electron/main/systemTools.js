@@ -83,6 +83,42 @@ export default {
   },
 
   /**
+   * 获取前台窗口的进程名（用于智能环境感知）
+   * @returns {string|null} 进程名（如 "code", "chrome"）
+   */
+  getForegroundProcessName() {
+    if (process.platform !== 'win32') return null;
+
+    const script = `
+      Add-Type @"
+      using System;
+      using System.Runtime.InteropServices;
+      using System.Diagnostics;
+      public class Win32Proc {
+        [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+        [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+      }
+"@
+      $hwnd = [Win32Proc]::GetForegroundWindow()
+      $pid = 0
+      [Win32Proc]::GetWindowThreadProcessId($hwnd, [ref]$pid) | Out-Null
+      if ($pid -gt 0) {
+        try {
+          (Get-Process -Id $pid -ErrorAction SilentlyContinue).ProcessName
+        } catch {}
+      }
+    `;
+
+    try {
+      const result = runPowershellSync(script);
+      return result || null;
+    } catch (e) {
+      console.error('获取前台进程名失败:', e);
+      return null;
+    }
+  },
+
+  /**
    * 通过句柄操作指定窗口
    * @param {string} hwnd - 窗口句柄
    * @param {string} action - 操作类型
@@ -285,6 +321,43 @@ export default {
       if (robot) {
         try {
           robot.keyTap('c', 'command');
+          return;
+        } catch (e) {}
+      }
+    }
+  },
+
+  /**
+   * 模拟 Ctrl+V (粘贴) - 使用 robotjs
+   */
+  simulatePaste() {
+    if (process.platform === 'win32') {
+      if (robot) {
+        try {
+          // 先释放所有可能被按住的修饰键
+          robot.keyToggle('alt', 'up');
+          robot.keyToggle('shift', 'up');
+          robot.keyToggle('control', 'up');
+
+          // 发送 Ctrl+V
+          robot.keyTap('v', 'control');
+          return;
+        } catch (e) {
+          console.error('robotjs paste error:', e.message);
+        }
+      }
+      // 备用方案
+      try {
+        execSync('powershell -NoProfile -Command "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait(\'^v\')"', {
+          encoding: 'utf8',
+          timeout: 1000,
+          windowsHide: true
+        });
+      } catch (e) {}
+    } else if (process.platform === 'darwin') {
+      if (robot) {
+        try {
+          robot.keyTap('v', 'command');
           return;
         } catch (e) {}
       }

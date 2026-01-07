@@ -1,5 +1,29 @@
 <template>
-  <div class="quicker-use-app" @dragover.prevent @drop.prevent="handleDrop">
+  <!-- 全局轮盘菜单模式 -->
+  <GlobalRadialMenu
+    v-if="isRadialMenuMode"
+    :visible="radialMenuVisible"
+    :slots="globalRadialMenuSlots"
+    :menu-items="globalRadialMenuItems"
+    :center-x="radialMenuX"
+    :center-y="radialMenuY"
+    :theme="radialMenuTheme"
+    :show-hints="radialMenuShowHints"
+    @select="handleGlobalRadialSelect"
+    @cancel="handleGlobalRadialCancel"
+    @close="handleGlobalRadialClose"
+  />
+
+  <!-- 主界面 -->
+  <div
+    v-else
+    class="quicker-use-app"
+    @dragover.prevent
+    @drop.prevent="handleDrop"
+    @mousedown.capture="handleRightMouseDown"
+    @mouseup.capture="handleRightMouseUp"
+    @contextmenu.prevent
+  >
     <!-- 顶部标题栏 (可拖动) -->
     <div class="title-bar" style="-webkit-app-region: drag;">
       <span class="app-title">QuickerUse</span>
@@ -8,7 +32,7 @@
           <el-icon class="action-icon" @click="showAbout = true"><InfoFilled /></el-icon>
         </el-tooltip>
         <el-tooltip content="设置" placement="bottom">
-          <el-icon class="action-icon" @click="showSettings = true"><Setting /></el-icon>
+          <el-icon class="action-icon" @click="openSettingsDialog"><Setting /></el-icon>
         </el-tooltip>
         <el-tooltip :content="isPinned ? '取消置顶' : '置顶窗口'" placement="bottom">
           <span class="action-icon pin-icon" :class="{ 'is-pinned': isPinned }" @click="togglePin">
@@ -25,7 +49,7 @@
 
     <!-- 智能推荐区 -->
     <ToolGrid
-      v-if="smartDisplayList.length > 0"
+      v-if="smartDisplayList.length > 0 && !showAIPanel"
       title="智能推荐"
       :items="smartDisplayList"
       :rows="settings.smartRows"
@@ -42,6 +66,7 @@
 
     <!-- 我的工具区 -->
     <ToolGrid
+      v-if="!showAIPanel"
       title="我的工具"
       :items="customActions"
       :rows="settings.customRows"
@@ -56,6 +81,14 @@
       @reorder="handleCustomReorder"
     />
 
+    <!-- AI 聊天面板 -->
+    <AIChatPanel
+      v-if="showAIPanel"
+      :initial-text="aiInitialText"
+      @close="showAIPanel = false"
+      class="ai-panel-container"
+    />
+
     <!-- 功能弹窗 -->
     <FeatureModal
       v-model="showFeatureModal"
@@ -65,22 +98,13 @@
       @close="handleFeatureModalClose"
     />
 
-    <!-- 设置弹窗 -->
-    <SettingsModal
-      v-model="showSettings"
-      :settings="settings"
-      :hotkeys="smartHotkeys"
-      @settings-change="handleSettingsChange"
-      @hotkeys-change="handleHotkeysChange"
-      @reset-tools="resetCustomActions"
-      @reset-all="resetAllSettings"
-    />
-
     <!-- 添加工具弹窗 -->
     <AddToolModal
       v-model="showAddTool"
       :existing-actions="customActions"
+      :pending-file="pendingDropFile"
       @add-file="addCustomTool"
+      @file-processed="pendingDropFile = null"
     />
 
     <!-- 文件信息弹窗 -->
@@ -98,6 +122,18 @@
       @hide-feature="hideSmartFeature"
       @restore-feature="restoreSmartFeature"
       @hotkeys-change="handleHotkeysChange"
+    />
+
+    <!-- 设置弹窗 -->
+    <SettingsModal
+      v-model="showSettingsModal"
+      :settings="settings"
+      :hotkeys="smartHotkeys"
+      @settings-change="handleSettingsChange"
+      @hotkeys-change="handleHotkeysChange"
+      @reset-tools="resetCustomActions"
+      @reset-all="resetAllSettings"
+      @radial-settings-change="handleRadialSettingsChange"
     />
 
     <!-- 右键确认弹窗 -->
@@ -150,6 +186,17 @@
         <p class="about-copy">© 2024 QuickerUse</p>
       </div>
     </el-dialog>
+
+    <!-- 轮盘菜单 -->
+    <RadialMenu
+      :visible="showRadialMenu"
+      :items="radialMenuItems"
+      :center-x="radialMenuX"
+      :center-y="radialMenuY"
+      @select="handleRadialSelect"
+      @cancel="handleRadialCancel"
+      @close="handleRadialClose"
+    />
   </div>
 </template>
 
@@ -161,18 +208,31 @@ import { Setting, InfoFilled, Close } from '@element-plus/icons-vue';
 // 组件
 import ToolGrid from './components/ToolGrid.vue';
 import FeatureModal from './components/FeatureModal.vue';
-import SettingsModal from './components/SettingsModal.vue';
 import AddToolModal from './components/AddToolModal.vue';
 import FileInfoModal from './components/FileInfoModal.vue';
 import ManageFeaturesModal from './components/ManageFeaturesModal.vue';
+import AIChatPanel from './components/AIChatPanel.vue';
+import RadialMenu from './components/RadialMenu.vue';
+import GlobalRadialMenu from './components/GlobalRadialMenu.vue';
+import SettingsModal from './components/SettingsModal.vue';
 
 // 工具
 import textProcessor from './utils/textProcessor';
 import fileProcessor from './utils/fileProcessor';
+import * as calculator from './utils/calculator';
+import * as encoder from './utils/encoder';
+import * as regexHelper from './utils/regex';
+import * as colorConverter from './utils/colorConverter';
+import * as cronUtil from './utils/cron';
+import * as markdownUtil from './utils/markdown';
+import * as ocrUtil from './utils/ocr';
+import * as aiUtil from './utils/ai';
+import * as envSensing from './utils/envSensing';
 import { ALL_FEATURES, DEFAULT_SETTINGS, SEARCH_ENGINES, TRANSLATE_SERVICES } from './utils/constants';
 
 // === 状态 ===
 const clipboardContent = ref('');
+const foregroundProcess = ref('');  // 前台窗口进程名（环境感知）
 const smartBlacklist = ref(new Set(JSON.parse(localStorage.getItem('smart-blacklist') || '[]')));
 const smartOrder = ref(JSON.parse(localStorage.getItem('smart-order') || '[]'));
 const customActions = ref(JSON.parse(localStorage.getItem('custom-actions') || '[]'));
@@ -180,14 +240,40 @@ const settings = reactive(JSON.parse(localStorage.getItem('app-settings') || JSO
 const smartHotkeys = reactive(JSON.parse(localStorage.getItem('smart-hotkeys') || '{}'));
 const isPinned = ref(false);
 
+// 全局轮盘菜单模式状态
+const isRadialMenuMode = ref(false);
+const radialMenuVisible = ref(false);
+const radialMenuTheme = ref('dark');
+const radialMenuShowHints = ref(true);
+const globalRadialMenuItems = ref([]);
+const globalRadialMenuSlots = ref([]);
+
 // 弹窗状态
-const showSettings = ref(false);
 const showAddTool = ref(false);
 const showFileInfo = ref(false);
 const showManageFeatures = ref(false);
 const showFeatureModal = ref(false);
 const showConfirmDialog = ref(false);
 const showAbout = ref(false);
+const showAIPanel = ref(false);
+const showSettingsModal = ref(false);
+const aiInitialText = ref('');
+const pendingDropFile = ref(null);  // 待处理的拖拽文件
+
+// 轮盘菜单状态
+const showRadialMenu = ref(false);
+const radialMenuX = ref(0);
+const radialMenuY = ref(0);
+let rightClickTimer = null;
+
+// 轮盘菜单设置 (从 localStorage 加载)
+const radialMenuSettings = reactive({
+  enabled: true,
+  triggerMode: 'rightLongPress',
+  longPressDelay: 400,
+  theme: 'dark',
+  menuItems: []
+});
 
 // 确认弹窗数据
 const confirmDialogData = reactive({
@@ -214,7 +300,7 @@ const customActionSet = computed(() => {
   return new Set(customActions.value.filter(a => a.type === 'builtin').map(a => a.action));
 });
 
-// 智能推荐列表 - 排除已添加到我的工具中的内置功能
+// 智能推荐列表 - 排除已添加到我的工具中的内置功能，支持环境感知
 const smartFiltered = computed(() => {
   let list = [];
   if (settings.mode === 'all') {
@@ -223,11 +309,26 @@ const smartFiltered = computed(() => {
     const text = clipboardContent.value;
     list = text ? textProcessor.analyze(text) : ALL_FEATURES.slice(0, 8);
   }
+
   // 过滤黑名单和已添加到自定义区的内置功能
-  return list.filter(i =>
+  let filtered = list.filter(i =>
     !smartBlacklist.value.has(i.action) &&
     !customActionSet.value.has(i.action)
   );
+
+  // 环境感知：根据前台应用调整推荐顺序
+  if (envSensing.isEnabled() && foregroundProcess.value) {
+    const recommendations = envSensing.getSmartRecommendations(foregroundProcess.value);
+    if (recommendations.matched && recommendations.features.length > 0) {
+      // 将推荐的功能排到前面
+      const recommendedSet = new Set(recommendations.features);
+      const recommended = filtered.filter(item => recommendedSet.has(item.action));
+      const others = filtered.filter(item => !recommendedSet.has(item.action));
+      filtered = [...recommended, ...others];
+    }
+  }
+
+  return filtered;
 });
 
 // 应用自定义排序
@@ -277,149 +378,45 @@ const handleSmartClick = (item) => {
   // JSON处理
   else if (action === 'json-format') {
     const result = textProcessor.processJsonFormat(rawText);
-    openTextEditor('JSON 处理', result, [
-      { label: '格式化', handler: (t) => { featureModalRef.value?.setContent(textProcessor.processJsonFormat(t)); } },
-      { label: '压缩', handler: (t) => { featureModalRef.value?.setContent(textProcessor.processJsonMinify(t)); } },
-      { label: '校验', handler: (t) => {
-        try { JSON.parse(t); ElMessage.success('JSON格式正确'); }
-        catch { ElMessage.error('JSON格式错误'); }
-      }}
-    ]);
+    openTextEditor('JSON 处理', result, 'json');
   }
   // SQL处理
   else if (action === 'sql-in') {
-    openTextEditor('SQL IN', textProcessor.processSqlIn(rawText), [
-      { label: '转IN', handler: (t) => { featureModalRef.value?.setContent(textProcessor.processSqlIn(t)); } },
-      { label: '逗号分隔', handler: (t) => { featureModalRef.value?.setContent(t.replace(/(\r\n|\n|\r)/gm, ',')); } }
-    ]);
+    openTextEditor('SQL IN', textProcessor.processSqlIn(rawText), 'sql');
   }
   // 时间戳转换
   else if (action === 'timestamp-convert') {
-    const pad = (n) => String(n).padStart(2, '0');
-
-    const formatDate = (date, format) => {
-      const y = date.getFullYear(), m = pad(date.getMonth() + 1), d = pad(date.getDate());
-      const H = pad(date.getHours()), M = pad(date.getMinutes()), S = pad(date.getSeconds());
-      const formats = {
-        'std': `${y}-${m}-${d} ${H}:${M}:${S}`,
-        'date': `${y}-${m}-${d}`,
-        'time': `${H}:${M}:${S}`,
-        'cn': `${y}年${m}月${d}日 ${H}:${M}:${S}`,
-        'compact': `${y}${m}${d}${H}${M}${S}`
-      };
-      return formats[format] || formats['std'];
-    };
-
-    const parse = (t) => {
-      const s = t.trim();
-      if (/^\d{10}$/.test(s)) return new Date(parseInt(s) * 1000);
-      if (/^\d{13}$/.test(s)) return new Date(parseInt(s));
-      return new Date(s);
-    };
-
-    const toFormat = (t, fmt) => {
-      const date = parse(t);
-      return isNaN(date.getTime()) ? '无效时间' : formatDate(date, fmt);
-    };
-
-    const toTs = (t, ms) => {
-      const date = new Date(t.trim());
-      if (isNaN(date.getTime())) return '无效日期';
-      return ms ? date.getTime().toString() : Math.floor(date.getTime() / 1000).toString();
-    };
-
     const isTs = textProcessor.isTimestamp(rawText.trim());
-    const result = isTs ? toFormat(rawText, 'std') : toTs(rawText, false);
-
-    openTextEditor('时间戳转换', result, [
-      { label: '标准', handler: (t) => { featureModalRef.value?.setContent(toFormat(t, 'std')); } },
-      { label: '日期', handler: (t) => { featureModalRef.value?.setContent(toFormat(t, 'date')); } },
-      { label: '时间', handler: (t) => { featureModalRef.value?.setContent(toFormat(t, 'time')); } },
-      { label: '中文', handler: (t) => { featureModalRef.value?.setContent(toFormat(t, 'cn')); } },
-      { label: '紧凑', handler: (t) => { featureModalRef.value?.setContent(toFormat(t, 'compact')); } },
-      { label: '秒戳', handler: (t) => { featureModalRef.value?.setContent(toTs(t, false)); } },
-      { label: '毫秒戳', handler: (t) => { featureModalRef.value?.setContent(toTs(t, true)); } }
-    ]);
+    let result = '';
+    if (isTs) {
+      const ts = parseInt(rawText.trim());
+      const date = new Date(ts.toString().length === 10 ? ts * 1000 : ts);
+      result = `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')} ${String(date.getHours()).padStart(2,'0')}:${String(date.getMinutes()).padStart(2,'0')}:${String(date.getSeconds()).padStart(2,'0')}`;
+    } else {
+      const date = new Date(rawText.trim());
+      result = isNaN(date.getTime()) ? '无效日期' : Math.floor(date.getTime() / 1000).toString();
+    }
+    openTextEditor('时间戳转换', result, 'timestamp');
   }
   // 变量命名转换
   else if (action === 'to-camel') {
-    // 支持空格、下划线、横线分隔的转换
     const toCamel = (s) => s.trim().toLowerCase().replace(/[-_\s]+([a-z])/g, (_, c) => c.toUpperCase());
-    const toSnake = (s) => s.trim().replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase().replace(/[-\s]+/g, '_');
-    const toKebab = (s) => s.trim().replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase().replace(/[_\s]+/g, '-');
-    const toPascal = (s) => { const c = toCamel(s); return c.charAt(0).toUpperCase() + c.slice(1); };
-    const toUpper = (s) => toSnake(s).toUpperCase();
-
-    // 保存原始文本用于复原
-    const originalText = rawText;
-
-    openTextEditor('变量命名转换', toCamel(rawText), [
-      { label: '小驼峰', handler: (t) => { featureModalRef.value?.setContent(toCamel(t)); } },
-      { label: '大驼峰', handler: (t) => { featureModalRef.value?.setContent(toPascal(t)); } },
-      { label: '下划线', handler: (t) => { featureModalRef.value?.setContent(toSnake(t)); } },
-      { label: '横线', handler: (t) => { featureModalRef.value?.setContent(toKebab(t)); } },
-      { label: '大写', handler: (t) => { featureModalRef.value?.setContent(toUpper(t)); } },
-      { label: '复原', handler: () => { featureModalRef.value?.setContent(originalText); } }
-    ]);
+    openTextEditor('变量命名转换', toCamel(rawText), 'naming');
   }
   // YAML处理
   else if (action === 'yaml-format' || action === 'yaml-to-json') {
-    openTextEditor('YAML 处理', rawText || '', [
-      { label: '格式化', handler: (t) => {
-        try {
-          const lines = t.split('\n');
-          let indent = 0;
-          const formatted = lines.map(line => {
-            const trimmed = line.trim();
-            if (trimmed.endsWith(':')) {
-              const result = '  '.repeat(indent) + trimmed;
-              indent++;
-              return result;
-            }
-            if (trimmed.startsWith('-')) {
-              return '  '.repeat(indent) + trimmed;
-            }
-            return '  '.repeat(indent) + trimmed;
-          }).join('\n');
-          featureModalRef.value?.setContent(formatted);
-        } catch (e) {
-          ElMessage.error('格式化失败: ' + e.message);
-        }
-      }},
-      { label: '校验', handler: (t) => {
-        const lines = t.split('\n').filter(l => l.trim());
-        let valid = true;
-        lines.forEach((line) => {
-          if (line.trim() && !line.includes(':') && !line.trim().startsWith('-') && !line.trim().startsWith('#')) {
-            valid = false;
-          }
-        });
-        if (valid) {
-          ElMessage.success('YAML 格式正确');
-        } else {
-          ElMessage.warning('YAML 格式可能有问题');
-        }
-      }},
-      { label: '转JSON', handler: (t) => {
-        const result = textProcessor.processYamlToJson(t);
-        if (result.startsWith('转换失败')) {
-          ElMessage.error(result);
-        } else {
-          featureModalRef.value?.setContent(result);
-        }
-      }}
-    ]);
+    openTextEditor('YAML 处理', rawText || '', 'yaml');
   }
   // 信息提取 - 带类型选择
   else if (action === 'extract-info') {
-    featureModalData.title = '信息提取';
-    featureModalData.type = 'extract';
-    featureModalData.text = rawText;
-    showFeatureModal.value = true;
+    openDialogWindow({
+      title: '信息提取',
+      type: 'extract',
+      text: rawText
+    });
   }
   // 生成器
   else if (action === 'generate-uuid') {
-    // 生成标准UUID
     const generateUUID = () => {
       return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
         const r = Math.random() * 16 | 0;
@@ -427,30 +424,7 @@ const handleSmartClick = (item) => {
         return v.toString(16);
       });
     };
-    // 生成无横杠UUID
-    const generateUUIDNoHyphen = () => generateUUID().replace(/-/g, '');
-    // 生成指定位数
-    const generateShortId = (len) => {
-      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-      let result = '';
-      for (let i = 0; i < len; i++) {
-        result += chars.charAt(Math.floor(Math.random() * chars.length));
-      }
-      return result;
-    };
-
-    const uuid = generateUUID();
-    openTextEditor('UUID 生成器', uuid, [
-      { label: '标准UUID', handler: () => { featureModalRef.value?.setContent(generateUUID()); } },
-      { label: '无短横', handler: () => { featureModalRef.value?.setContent(generateUUIDNoHyphen()); } },
-      { label: '大写', handler: (t) => { featureModalRef.value?.setContent(t.toUpperCase()); } },
-      { label: '小写', handler: (t) => { featureModalRef.value?.setContent(t.toLowerCase()); } },
-      { label: '8位ID', handler: () => { featureModalRef.value?.setContent(generateShortId(8)); } },
-      { label: '12位ID', handler: () => { featureModalRef.value?.setContent(generateShortId(12)); } },
-      { label: '16位ID', handler: () => { featureModalRef.value?.setContent(generateShortId(16)); } },
-      { label: '32位ID', handler: () => { featureModalRef.value?.setContent(generateShortId(32)); } },
-      { label: '重新生成', handler: () => { featureModalRef.value?.setContent(generateUUID()); } }
-    ]);
+    openTextEditor('UUID 生成器', generateUUID(), 'uuid');
   }
   else if (action === 'generate-password') {
     const generatePwd = () => {
@@ -461,9 +435,7 @@ const handleSmartClick = (item) => {
       }
       return password;
     };
-    openTextEditor('强密码生成器', generatePwd(), [
-      { label: '重新生成', handler: () => { featureModalRef.value?.setContent(generatePwd()); } }
-    ]);
+    openTextEditor('强密码生成器', generatePwd(), 'password');
   }
   // 取色器
   else if (action === 'color-picker') {
@@ -472,42 +444,189 @@ const handleSmartClick = (item) => {
       window.api?.send('pick-color');
     }, 200);
   }
-  // 贴图置顶
-  else if (action === 'snip-pin') {
-    window.api?.send('snip-pin');
-  }
   // 倒计时
   else if (action === 'timer') {
-    featureModalData.title = '倒计时';
-    featureModalData.type = 'timer';
-    showFeatureModal.value = true;
+    openDialogWindow({
+      title: '倒计时',
+      type: 'timer'
+    });
   }
   // 闪念胶囊
   else if (action === 'memo') {
-    featureModalData.title = '闪念胶囊';
-    featureModalData.type = 'memo';
-    showFeatureModal.value = true;
+    openDialogWindow({
+      title: '闪念胶囊',
+      type: 'memo'
+    });
   }
   // 二维码
   else if (action === 'generate-qr') {
     if (!rawText) return ElMessage.warning('无内容生成二维码');
-    featureModalData.title = '二维码';
-    featureModalData.type = 'qrcode';
-    featureModalData.text = rawText;
-    showFeatureModal.value = true;
+    openDialogWindow({
+      title: '二维码',
+      type: 'qrcode',
+      text: rawText
+    });
+  }
+  // 剪贴板历史
+  else if (action === 'clipboard-history') {
+    openDialogWindow({
+      title: '剪贴板历史',
+      type: 'clipboard-history'
+    });
+  }
+  // 计算器
+  else if (action === 'calculator') {
+    const text = rawText.trim();
+    let result = text || '输入表达式、带单位数值或进制数';
+
+    // 检测数学表达式
+    if (calculator.isMathExpression(text)) {
+      const evalResult = calculator.evaluate(text);
+      if (evalResult.success) {
+        result = evalResult.formatted;
+      } else {
+        result = evalResult.error;
+      }
+    }
+    // 检测单位值
+    else if (calculator.isUnitValue(text)) {
+      const conversion = calculator.smartConvert(text);
+      if (conversion) {
+        result = `${conversion.type}转换：\n`;
+        conversion.results.slice(0, 6).forEach(r => {
+          const val = typeof r.value === 'number' ? r.value.toFixed(4).replace(/\.?0+$/, '') : r.value;
+          result += `${val} ${r.name}\n`;
+        });
+      }
+    }
+    // 检测进制数
+    else if (calculator.isBaseNumber(text)) {
+      const base = calculator.convertBase(text);
+      if (base) {
+        result = `十进制: ${base.decimal}\n十六进制: ${base.hex}\n二进制: ${base.binary}\n八进制: ${base.octal}`;
+      }
+    }
+
+    openTextEditor('计算器', result, 'calculator');
+  }
+  // 编码转换
+  else if (action === 'encoder') {
+    const text = rawText.trim();
+    let result = text;
+
+    // 智能检测并解码
+    const detected = encoder.detectEncoding(text);
+    if (detected) {
+      const decoded = encoder.smartDecode(text);
+      if (decoded.success) {
+        result = `检测到 ${decoded.type}，解码结果：\n${decoded.result}`;
+      }
+    }
+
+    openTextEditor('编码转换', result, 'encoder');
+  }
+  // 正则表达式助手
+  else if (action === 'regex-helper') {
+    const text = rawText.trim();
+    openTextEditor('正则助手', text || '第一行输入正则表达式\n后面输入测试文本', 'regex');
+  }
+  // 颜色格式转换
+  else if (action === 'color-convert') {
+    const text = rawText.trim();
+    let result = text || '#FF5733';
+
+    // 尝试转换颜色
+    if (colorConverter.isColorString(text)) {
+      const converted = colorConverter.convertColor(text);
+      if (converted.success) {
+        result = `HEX: ${converted.hex}\nRGB: ${converted.rgb}\nHSL: ${converted.hsl}\nCMYK: ${converted.cmyk}`;
+      }
+    }
+
+    openTextEditor('颜色转换', result, 'color');
+  }
+  // Cron 表达式助手
+  else if (action === 'cron-helper') {
+    const text = rawText.trim();
+    let result = text || '0 0 * * *';
+
+    // 如果有输入，尝试解析 Cron 表达式
+    if (text && cronUtil.isValidCron(text)) {
+      const parsed = cronUtil.parseCron(text);
+      if (parsed.valid) {
+        const nextRuns = cronUtil.getNextExecutions(text, 5);
+        const nextRunsStr = nextRuns.map(d => cronUtil.formatDateTime(d)).join('\n');
+        result = `表达式: ${text}\n解析: ${parsed.desc}\n\n下次执行:\n${nextRunsStr || '无法计算'}`;
+      }
+    }
+
+    openTextEditor('Cron 表达式', result, 'cron');
+  }
+  // Markdown 预览
+  else if (action === 'markdown-preview') {
+    const text = rawText.trim();
+
+    // 渲染 Markdown
+    const rendered = markdownUtil.render(text || '# Markdown 预览\n\n输入或粘贴 Markdown 文本进行预览');
+    const stats = markdownUtil.countWords(text);
+    const toc = markdownUtil.extractToc(text);
+
+    openDialogWindow({
+      title: 'Markdown 预览',
+      type: 'markdown',
+      markdown: {
+        source: text,
+        html: rendered,
+        stats,
+        toc
+      }
+    });
+  }
+  // OCR 文字识别
+  else if (action === 'ocr') {
+    openDialogWindow({
+      title: 'OCR 文字识别',
+      type: 'ocr',
+      ocr: {
+        status: 'idle',
+        progress: 0,
+        result: '',
+        error: ''
+      }
+    });
+  }
+  // AI 智能助手 - 打开独立弹窗
+  else if (action === 'ai-assistant') {
+    openDialogWindow({
+      title: 'AI 助手',
+      type: 'ai',
+      ai: {
+        inputText: rawText || ''
+      }
+    });
   }
   else {
     console.warn('Unknown action:', action);
   }
 };
 
-// 打开文本编辑器弹窗
-const openTextEditor = (title, content, actions) => {
-  featureTextContent.value = content;
-  featureModalData.title = title;
-  featureModalData.type = 'text-editor';
-  featureModalData.actions = actions || [];
-  showFeatureModal.value = true;
+// 打开文本编辑器弹窗 - 使用独立窗口
+const openTextEditor = (title, content, actionType = null) => {
+  // 发送IPC打开独立弹出框窗口，传递动作类型而非函数
+  openDialogWindow({
+    title,
+    type: 'text-editor',
+    actionType,  // 动作类型标识，由弹出框内部处理
+    initialText: content
+  });
+};
+
+// 打开独立弹出框窗口
+const openDialogWindow = (data) => {
+  // 隐藏主窗口到托盘
+  window.api?.send('hide-window');
+  // 立即打开弹出框
+  window.api?.send('open-dialog-window', data);
 };
 
 const handleFeatureModalClose = () => {
@@ -613,14 +732,9 @@ const handleDrop = async (e) => {
 
     // 可执行文件 -> 添加到工具
     if (['exe', 'lnk', 'app', 'bat', 'cmd', 'msi'].includes(ext)) {
+      // 设置待处理文件，然后打开弹窗
+      pendingDropFile.value = { path: filePath, name: file.name };
       showAddTool.value = true;
-      // 延迟设置拖拽的文件信息，等待弹窗完全渲染
-      setTimeout(() => {
-        // 通过事件通知AddToolModal
-        window.dispatchEvent(new CustomEvent('file-dropped', {
-          detail: { path: filePath, name: file.name }
-        }));
-      }, 200);
     } else {
       // 其他文件 -> 显示文件信息
       fileInfo.name = file.name;
@@ -665,6 +779,13 @@ const resetAllSettings = () => {
   saveData();
 };
 
+// 轮盘菜单设置变更
+const handleRadialSettingsChange = (radialSettings) => {
+  console.log('[App] Radial settings changed:', radialSettings);
+  // 发送到主进程更新
+  window.api?.send('update-radial-menu-settings', radialSettings);
+};
+
 const applySettings = () => {
   document.documentElement.setAttribute('data-theme', settings.theme);
   const appEl = document.querySelector('.quicker-use-app');
@@ -680,6 +801,11 @@ const togglePin = () => {
 // 最小化到托盘
 const hideToTray = () => {
   window.api?.send('hide-window');
+};
+
+// 打开设置窗口
+const openSettingsDialog = () => {
+  showSettingsModal.value = true;
 };
 
 // 保存数据
@@ -704,22 +830,174 @@ const saveData = () => {
   }
 };
 
+// === 轮盘菜单功能 ===
+const radialMenuItems = computed(() => {
+  // 全局轮盘模式使用从主进程传入的菜单项
+  if (isRadialMenuMode.value && globalRadialMenuItems.value.length > 0) {
+    return globalRadialMenuItems.value;
+  }
+  // 从智能推荐获取常用功能（主窗口内的轮盘）
+  const items = [
+    { label: 'JSON格式化', icon: '📋', action: 'json-format' },
+    { label: '时间转换', icon: '⏰', action: 'timestamp-convert' },
+    { label: '计算器', icon: '🔢', action: 'calculator' },
+    { label: '编码转换', icon: '🔤', action: 'encoder' },
+    { label: '颜色转换', icon: '🎨', action: 'color-convert' },
+    { label: '正则助手', icon: '📝', action: 'regex-helper' },
+    { label: 'AI助手', icon: '🤖', action: 'ai-assistant' },
+    { label: '剪贴板', icon: '📎', action: 'clipboard-history' }
+  ];
+  return items;
+});
+
+// 右键按下 - 开始计时
+const handleRightMouseDown = (e) => {
+  console.log('[RadialMenu] mousedown event, button:', e.button);
+  if (e.button !== 2) return; // 只处理右键
+
+  console.log('[RadialMenu] Right click detected, settings:', {
+    enabled: radialMenuSettings.enabled,
+    triggerMode: radialMenuSettings.triggerMode,
+    delay: radialMenuSettings.longPressDelay
+  });
+
+  // 检查轮盘菜单是否启用且触发方式为右键长按
+  if (!radialMenuSettings.enabled || radialMenuSettings.triggerMode !== 'rightLongPress') {
+    console.log('[RadialMenu] Radial menu disabled or wrong trigger mode');
+    return;
+  }
+
+  // 记录位置 (屏幕坐标)
+  const screenX = e.screenX;
+  const screenY = e.screenY;
+  console.log('[RadialMenu] Starting timer, position:', screenX, screenY);
+
+  // 开始长按计时
+  rightClickTimer = setTimeout(() => {
+    console.log('[RadialMenu] Long press triggered at:', screenX, screenY);
+    // 通过 IPC 触发全局轮盘菜单
+    window.api?.send('open-radial-menu', { x: screenX, y: screenY });
+    rightClickTimer = null;
+  }, radialMenuSettings.longPressDelay || 400);
+};
+
+// 右键释放 - 取消计时
+const handleRightMouseUp = (e) => {
+  if (e.button !== 2) return;
+
+  if (rightClickTimer) {
+    clearTimeout(rightClickTimer);
+    rightClickTimer = null;
+  }
+};
+
+// 轮盘选择
+const handleRadialSelect = (item) => {
+  console.log('[RadialMenu] Selected:', item.action);
+  handleSmartClick({ action: item.action, payload: clipboardContent.value });
+};
+
+// 轮盘取消
+const handleRadialCancel = () => {
+  console.log('[RadialMenu] Cancelled');
+};
+
+// 轮盘关闭
+const handleRadialClose = () => {
+  showRadialMenu.value = false;
+};
+
+// === 全局轮盘菜单处理 ===
+// 全局轮盘选择
+const handleGlobalRadialSelect = (item) => {
+  console.log('[GlobalRadialMenu] Selected:', item);
+  // 发送动作到主进程
+  if (item && item.action) {
+    window.api?.send('radial-menu-action', { action: item.action, data: { item } });
+  }
+};
+
+// 全局轮盘取消
+const handleGlobalRadialCancel = () => {
+  console.log('[GlobalRadialMenu] Cancelled');
+  window.api?.send('close-radial-menu');
+};
+
+// 全局轮盘关闭
+const handleGlobalRadialClose = () => {
+  radialMenuVisible.value = false;
+  window.api?.send('close-radial-menu');
+};
+
 // === 生命周期 ===
 onMounted(() => {
+  // 检查是否为全局轮盘菜单模式
+  const urlParams = new URLSearchParams(window.location.search);
+  isRadialMenuMode.value = urlParams.get('radialMenuMode') === 'true';
+
+  if (isRadialMenuMode.value) {
+    console.log('[App] Running in Radial Menu Mode');
+    // 轮盘菜单模式下，监听初始化事件
+    if (window.api) {
+      window.api.on('radial-menu-init', (data) => {
+        console.log('[App] Radial menu init:', data);
+        radialMenuX.value = data.centerX || window.innerWidth / 2;
+        radialMenuY.value = data.centerY || window.innerHeight / 2;
+
+        // 加载设置
+        if (data.settings) {
+          radialMenuTheme.value = data.settings.theme || 'dark';
+          radialMenuShowHints.value = data.settings.showHints !== false;
+          // 优先使用 slots 格式，兼容 menuItems 格式
+          globalRadialMenuSlots.value = data.settings.slots || [];
+          globalRadialMenuItems.value = data.settings.menuItems || [];
+          console.log('[App] Radial menu slots:', globalRadialMenuSlots.value.length, 'menuItems:', globalRadialMenuItems.value.length);
+        }
+
+        // 显示轮盘
+        radialMenuVisible.value = true;
+      });
+    }
+    return; // 轮盘模式下不执行后续主界面逻辑
+  }
+
   applySettings();
+
+  // 加载轮盘菜单设置
+  try {
+    const savedRadial = localStorage.getItem('radial-menu-settings');
+    console.log('[App] Raw radial settings from localStorage:', savedRadial ? 'found' : 'not found');
+    if (savedRadial) {
+      const parsed = JSON.parse(savedRadial);
+      Object.assign(radialMenuSettings, parsed);
+      console.log('[App] Loaded radial menu settings:', {
+        enabled: radialMenuSettings.enabled,
+        triggerMode: radialMenuSettings.triggerMode,
+        delay: radialMenuSettings.longPressDelay
+      });
+    } else {
+      console.log('[App] Using default radial menu settings:', {
+        enabled: radialMenuSettings.enabled,
+        triggerMode: radialMenuSettings.triggerMode,
+        delay: radialMenuSettings.longPressDelay
+      });
+    }
+  } catch (e) {
+    console.error('[App] Failed to load radial menu settings:', e);
+  }
 
   // 键盘事件
   document.addEventListener('keyup', (e) => {
     if (e.key === 'Escape') {
-      if (showSettings.value || showAddTool.value || showFileInfo.value ||
-          showManageFeatures.value || showFeatureModal.value || showConfirmDialog.value || showAbout.value) {
-        showSettings.value = false;
+      if (showAddTool.value || showFileInfo.value ||
+          showManageFeatures.value || showFeatureModal.value || showConfirmDialog.value || showAbout.value || showSettingsModal.value) {
         showAddTool.value = false;
         showFileInfo.value = false;
         showManageFeatures.value = false;
         showFeatureModal.value = false;
         showConfirmDialog.value = false;
         showAbout.value = false;
+        showSettingsModal.value = false;
       } else {
         window.api?.send('hide-window');
       }
@@ -730,6 +1008,12 @@ onMounted(() => {
   if (window.api) {
     window.api.on('clipboard-data', (text) => {
       clipboardContent.value = text;
+    });
+
+    // 接收前台进程名（环境感知）
+    window.api.on('foreground-process', (processName) => {
+      foregroundProcess.value = processName || '';
+      console.log('[EnvSensing] Foreground process:', processName);
     });
 
     window.api.on('trigger-smart-action', ({ action, text }) => {
@@ -750,15 +1034,32 @@ onMounted(() => {
       showAbout.value = true;
     });
 
-    // 贴图置顶结果
-    window.api.on('snip-pin-result', ({ success, error }) => {
-      if (!success) {
-        ElMessage.warning(error || '贴图失败');
+    // 独立弹出框关闭
+    window.api.on('dialog-closed', () => {
+      console.log('[App] Dialog closed');
+    });
+
+    // 独立弹出框返回结果
+    window.api.on('dialog-result', (result) => {
+      console.log('[App] Dialog result:', result);
+      // 处理弹出框返回的结果
+      if (result && result.text) {
+        window.api?.send('write-clipboard', result.text);
+        ElMessage.success('已复制');
       }
     });
 
     window.api.send('update-global-hotkey', settings.globalHotkey);
     window.api.send('update-smart-hotkeys', JSON.parse(JSON.stringify(smartHotkeys)));
+
+    // 发送自定义工具的快捷键（启动时注册）
+    const customHotkeys = {};
+    customActions.value.forEach((tool, idx) => {
+      if (tool.hotkey) {
+        customHotkeys[`custom_${idx}`] = { hotkey: tool.hotkey, tool };
+      }
+    });
+    window.api.send('update-custom-hotkeys', customHotkeys);
   }
 });
 </script>
@@ -930,5 +1231,14 @@ onMounted(() => {
   font-size: 11px;
   color: var(--text-dim);
   margin: 0;
+}
+
+/* AI 面板容器 */
+.ai-panel-container {
+  flex: 1;
+  min-height: 0;
+  margin: 0 10px 10px 10px;
+  border: 1px solid var(--grid-line);
+  border-radius: 8px;
 }
 </style>

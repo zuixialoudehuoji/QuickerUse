@@ -15,13 +15,16 @@ export const FEATURE_ICONS = {
   // 开发辅助
   'timestamp-convert': 'Clock',
   'to-camel': 'EditPen',
+  'regex-helper': 'Aim',
+  'color-convert': 'Sunset',
 
   // 信息提取
   'extract-info': 'Postcard',
 
   // 工具
   'generate-qr': 'Grid',
-  'snip-pin': 'Picture',
+  'clipboard-history': 'DocumentCopy',
+  'cron-helper': 'Timer',
 
   // 生成器
   'generate-uuid': 'Key',
@@ -30,7 +33,20 @@ export const FEATURE_ICONS = {
   // 系统工具
   'color-picker': 'Brush',
   'timer': 'AlarmClock',
-  'memo': 'Memo'
+  'memo': 'Memo',
+
+  // 计算与转换
+  'calculator': 'Odometer',
+  'encoder': 'Coin',
+
+  // Markdown
+  'markdown-preview': 'Reading',
+
+  // OCR
+  'ocr': 'Camera',
+
+  // AI
+  'ai-assistant': 'ChatDotRound'
 };
 
 // 所有智能功能定义
@@ -82,6 +98,18 @@ export const ALL_FEATURES = [
     category: 'dev',
     description: '驼峰/下划线/短横线命名互转'
   },
+  {
+    label: '正则助手',
+    action: 'regex-helper',
+    category: 'dev',
+    description: '正则表达式测试和常用模式'
+  },
+  {
+    label: '颜色转换',
+    action: 'color-convert',
+    category: 'dev',
+    description: 'HEX/RGB/HSL颜色格式互转'
+  },
 
   // === 信息提取 ===
   {
@@ -99,16 +127,22 @@ export const ALL_FEATURES = [
     description: '将文本或链接生成二维码'
   },
   {
-    label: '贴图置顶',
-    action: 'snip-pin',
-    category: 'tool',
-    description: '将剪贴板图片悬浮置顶'
-  },
-  {
     label: '闪念胶囊',
     action: 'memo',
     category: 'tool',
     description: '快速记录想法和备忘'
+  },
+  {
+    label: '剪贴板历史',
+    action: 'clipboard-history',
+    category: 'tool',
+    description: '查看和管理剪贴板历史记录'
+  },
+  {
+    label: 'Cron表达式',
+    action: 'cron-helper',
+    category: 'dev',
+    description: 'Cron表达式解析和生成'
   },
 
   // === 生成器 ===
@@ -137,17 +171,56 @@ export const ALL_FEATURES = [
     action: 'timer',
     category: 'system',
     description: '设置定时提醒'
+  },
+  {
+    label: '计算器',
+    action: 'calculator',
+    category: 'tool',
+    description: '数学计算、单位换算、进制转换'
+  },
+  {
+    label: '编码转换',
+    action: 'encoder',
+    category: 'dev',
+    description: 'Base64/URL/Unicode/HTML编解码'
+  },
+  {
+    label: 'Markdown预览',
+    action: 'markdown-preview',
+    category: 'dev',
+    description: '实时预览Markdown渲染效果'
+  },
+  {
+    label: 'OCR识别',
+    action: 'ocr',
+    category: 'tool',
+    description: '识别图片中的文字内容'
+  },
+  {
+    label: 'AI助手（测试）',
+    action: 'ai-assistant',
+    category: 'tool',
+    description: 'AI智能问答、翻译、摘要、代码解释'
   }
 ];
 
 // 内置工具列表 (可添加到自定义区)
 export const BUILTIN_TOOLS = [
+  { label: '剪贴板历史', action: 'clipboard-history', icon: 'DocumentCopy', description: '剪贴板历史' },
+  { label: 'Cron表达式', action: 'cron-helper', icon: 'Timer', description: 'Cron解析生成' },
+  { label: '计算器', action: 'calculator', icon: 'Odometer', description: '计算与换算' },
+  { label: '编码转换', action: 'encoder', icon: 'Coin', description: '编解码工具' },
+  { label: '正则助手', action: 'regex-helper', icon: 'Aim', description: '正则测试' },
+  { label: '颜色转换', action: 'color-convert', icon: 'Sunset', description: '颜色格式转换' },
   { label: '屏幕取色', action: 'color-picker', icon: 'Brush', description: '拾取屏幕颜色' },
   { label: '倒计时', action: 'timer', icon: 'AlarmClock', description: '定时提醒' },
   { label: 'UUID', action: 'generate-uuid', icon: 'Key', description: '生成UUID' },
   { label: '强密码', action: 'generate-password', icon: 'Lock', description: '生成密码' },
   { label: '闪念胶囊', action: 'memo', icon: 'Memo', description: '快速备忘' },
-  { label: '二维码', action: 'generate-qr', icon: 'Grid', description: '生成二维码' }
+  { label: '二维码', action: 'generate-qr', icon: 'Grid', description: '生成二维码' },
+  { label: 'Markdown', action: 'markdown-preview', icon: 'Reading', description: 'Markdown预览' },
+  { label: 'OCR识别', action: 'ocr', icon: 'Camera', description: '图片文字识别' },
+  { label: 'AI助手（测试）', action: 'ai-assistant', icon: 'ChatDotRound', description: 'AI智能问答' }
 ];
 
 // 默认设置

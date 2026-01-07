@@ -133,10 +133,11 @@ import { ICON_LIBRARY } from '@/utils/iconLibrary';
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
-  existingActions: { type: Array, default: () => [] }
+  existingActions: { type: Array, default: () => [] },
+  pendingFile: { type: Object, default: null }  // 从父组件传入的待处理文件
 });
 
-const emit = defineEmits(['update:modelValue', 'add-file']);
+const emit = defineEmits(['update:modelValue', 'add-file', 'file-processed']);
 
 const visible = ref(props.modelValue);
 const showIconPicker = ref(false);
@@ -159,8 +160,23 @@ watch(() => props.modelValue, (val) => {
   visible.value = val;
   if (val) {
     clearFile();
+    // 如果有待处理的文件，立即处理
+    if (props.pendingFile) {
+      nextTick(() => {
+        setFileInfo(props.pendingFile.path, props.pendingFile.name);
+        emit('file-processed');
+      });
+    }
   }
 });
+
+// 监听 pendingFile 变化（弹窗已打开时文件拖入）
+watch(() => props.pendingFile, (file) => {
+  if (file && visible.value) {
+    setFileInfo(file.path, file.name);
+    emit('file-processed');
+  }
+}, { immediate: false });
 
 watch(visible, (val) => {
   emit('update:modelValue', val);
@@ -319,12 +335,6 @@ const selectSvgIcon = (svgContent) => {
   showIconPicker.value = false;
 };
 
-// 监听外部文件拖放事件 (从 App.vue 传递)
-const handleExternalFileDrop = (e) => {
-  const { path, name } = e.detail;
-  setFileInfo(path, name);
-};
-
 // 监听文件图标返回
 const handleFileIconData = (data) => {
   if (data && data.icon && data.path === newItem.path) {
@@ -334,14 +344,14 @@ const handleFileIconData = (data) => {
 };
 
 onMounted(() => {
-  window.addEventListener('file-dropped', handleExternalFileDrop);
+  // 监听文件图标返回
   if (window.api) {
     window.api.on('file-icon-data', handleFileIconData);
   }
 });
 
 onUnmounted(() => {
-  window.removeEventListener('file-dropped', handleExternalFileDrop);
+  // 清理（如有必要）
 });
 </script>
 

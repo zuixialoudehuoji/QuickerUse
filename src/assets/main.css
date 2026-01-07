@@ -2,17 +2,17 @@
 
 /* 主题变量定义 */
 :root {
-  /* 深色主题 - 调整网格线更可见 */
-  --bg-color: #1a1a1a;
-  --bg-item: #222222;
-  --bg-item-hover: #2d2d2d;
-  --border-color: #3a3a3a;
+  /* 深色主题 - 柔和深色，不那么黑 */
+  --bg-color: #2b2b2b;
+  --bg-item: #363636;
+  --bg-item-hover: #424242;
+  --border-color: #4a4a4a;
   --text-color: #e8e8e8;
-  --text-dim: #999999;
-  --grid-line: #3a3a3a;
+  --text-dim: #a0a0a0;
+  --grid-line: #454545;
   --accent-color: #409eff;
-  --modal-bg: #252525;
-  --dot-color: #555;
+  --modal-bg: #323232;
+  --dot-color: #666;
   --dot-active: #fff;
 }
 

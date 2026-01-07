@@ -20,11 +20,14 @@
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.1",
     "element-plus": "^2.4.4",
+    "highlight.js": "^11.11.1",
     "iconv-lite": "^0.7.1",
     "lowdb": "^7.0.1",
+    "marked": "^17.0.1",
     "pinia": "^2.1.7",
     "qrcode": "^1.5.4",
     "robotjs": "^0.6.0",
+    "tesseract.js": "^7.0.0",
     "vue": "^3.3.11"
   },
   "devDependencies": {
@@ -73,11 +76,15 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         },
         {
           "target": "portable",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "resources/icon.png"
@@ -88,18 +95,21 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "QuickerUse",
-      "license": "resources/license.txt",
       "include": "resources/installer.nsh"
     },
     "portable": {
       "artifactName": "${productName}-${version}-Portable.${ext}"
     },
     "mac": {
-      "target": ["dmg"],
+      "target": [
+        "dmg"
+      ],
       "icon": "resources/icon.icns"
     },
     "linux": {
-      "target": ["AppImage"],
+      "target": [
+        "AppImage"
+      ],
       "icon": "resources/icon.png"
     }
   }

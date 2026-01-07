@@ -5,6 +5,7 @@ import 'element-plus/dist/index.css'
 import 'element-plus/theme-chalk/dark/css-vars.css'
 import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 import App from './App.vue'
+import DialogApp from './DialogApp.vue'
 import './assets/main.css'
 
 // 屏蔽 Electron 开发环境的安全警告
@@ -14,8 +15,15 @@ console.warn = (...args) => {
   originalWarn(...args);
 };
 
+// 检测是否为弹出框模式
+const params = new URLSearchParams(window.location.search);
+const isDialogMode = params.get('dialogMode') === 'true';
+
+// 根据模式选择应用组件
+const AppComponent = isDialogMode ? DialogApp : App;
+
 // 创建Vue应用实例
-const app = createApp(App)
+const app = createApp(AppComponent)
 
 // 注册所有Element Plus图标
 for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
