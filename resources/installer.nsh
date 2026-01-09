@@ -4,9 +4,13 @@
 
 !include "nsDialogs.nsh"
 !include "LogicLib.nsh"
+!include "WinMessages.nsh"
 
 ; 禁用未引用函数的警告
 !pragma warning disable 6010
+
+; 按钮 ID：上一步=3
+!define BACK_BUTTON_ID 3
 
 ; ========== 页面函数定义 ==========
 !macro customHeader
@@ -23,19 +27,20 @@
       Abort
     ${EndIf}
   FunctionEnd
-
-  ; UAC 重启时隐藏上一步按钮（目录选择页是 UAC 后的第一页）
-  Function HideBackIfUAC
-    ${If} ${UAC_IsInnerInstance}
-      GetDlgItem $0 $HWNDPARENT 3
-      ShowWindow $0 0
-    ${EndIf}
-  FunctionEnd
 !macroend
 
 ; ========== 初始化 ==========
 !macro customInit
   ; 空初始化
+!macroend
+
+; ========== GUI 初始化完成后：UAC 重启时隐藏上一步按钮 ==========
+!macro customGUIInit
+  ${If} ${UAC_IsInnerInstance}
+    GetDlgItem $0 $HWNDPARENT ${BACK_BUTTON_ID}
+    ShowWindow $0 ${SW_HIDE}
+    EnableWindow $0 0
+  ${EndIf}
 !macroend
 
 ; ========== 欢迎页 ==========
@@ -49,10 +54,4 @@
   !undef MUI_PAGE_CUSTOMFUNCTION_PRE
   !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipLicenseIfUAC
   !insertmacro MUI_PAGE_LICENSE "${PROJECT_DIR}\resources\disclaimer.txt"
-!macroend
-
-; ========== 目录选择页配置 ==========
-!macro customPageDirectory
-  !undef MUI_PAGE_CUSTOMFUNCTION_PRE
-  !define MUI_PAGE_CUSTOMFUNCTION_SHOW HideBackIfUAC
 !macroend

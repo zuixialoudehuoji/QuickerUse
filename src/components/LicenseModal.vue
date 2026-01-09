@@ -163,7 +163,7 @@ onMounted(() => {
     // 监听激活结果
     window.api.on('license-activate-result', handleActivateResult)
 
-    // 立即验证
+    // 立即验证（仅启动时检查一次）
     validateLicense()
 
     // 超时保护：10秒后如果还在检查中，强制显示输入界面
@@ -176,12 +176,8 @@ onMounted(() => {
       }
     }, 10000)
 
-    // 定期检查（每 5 分钟，防止运行时绕过）
-    checkInterval = setInterval(() => {
-      if (window.api) {
-        window.api.send('license-get-status')
-      }
-    }, 5 * 60 * 1000)
+    // 注意：移除定时检查，只在启动时验证一次
+    // 避免使用过程中突然弹出密钥输入框
   } else {
     // 没有 API 时默认无效
     isChecking.value = false

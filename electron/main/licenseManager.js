@@ -9,29 +9,13 @@ import { execFile } from 'child_process';
 // 开发/生产环境判断
 const isDev = process.env.NODE_ENV === 'development';
 
-// 获取用户数据目录下的密钥文件路径（用于写入）
-const getUserLicenseFilePath = () => {
-  const userDataPath = app.getPath('userData');
-  return path.join(userDataPath, 'license.txt');
-};
-
-// 密钥文件路径（读取时优先用户目录，写入始终用户目录）
+// 密钥文件路径（直接从安装目录读取）
 const getLicenseFilePath = () => {
   if (isDev) {
     return path.join(__dirname, '../../resources/license.txt');
   }
-  // 生产环境：优先检查用户数据目录
-  const userLicensePath = getUserLicenseFilePath();
-  if (fs.existsSync(userLicensePath)) {
-    return userLicensePath;
-  }
-  // 兼容：检查 resources 目录（只读，用于预置密钥）
-  const resourceLicensePath = path.join(process.resourcesPath, 'license.txt');
-  if (fs.existsSync(resourceLicensePath)) {
-    return resourceLicensePath;
-  }
-  // 默认返回用户目录路径
-  return userLicensePath;
+  // 生产环境：直接从安装目录的 resources 读取
+  return path.join(process.resourcesPath, 'license.txt');
 };
 
 // Bridge.exe 路径
@@ -160,28 +144,19 @@ function readLicenseFromFile() {
 }
 
 /**
- * 将密钥保存到文件（始终保存到用户数据目录）
+ * 将密钥保存到文件
  * @param {string} licenseKey - 密钥字符串
  * @returns {boolean} 是否保存成功
  */
 function saveLicenseToFile(licenseKey) {
   try {
-    // 生产环境始终保存到用户数据目录（可写）
-    const licensePath = isDev
-      ? path.join(__dirname, '../../resources/license.txt')
-      : getUserLicenseFilePath();
-
-    // 确保目录存在
-    const dir = path.dirname(licensePath);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-
+    const licensePath = getLicenseFilePath();
     fs.writeFileSync(licensePath, licenseKey.replace(/\s+/g, ''), 'utf-8');
     console.log('[LicenseManager] License saved to:', licensePath);
     return true;
   } catch (e) {
     console.error('[LicenseManager] Failed to save license file:', e.message);
+    // 安装目录可能是只读的，保存失败是正常的
     return false;
   }
 }
