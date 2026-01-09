@@ -72,6 +72,10 @@
         "to": "license.txt"
       },
       {
+        "from": "resources/disclaimer.txt",
+        "to": "disclaimer.txt"
+      },
+      {
         "from": "resources/icon.png",
         "to": "icon.png"
       },

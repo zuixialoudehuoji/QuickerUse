@@ -65,13 +65,7 @@
             <span class="action-btn" :class="{ active: regexMode === 'patterns' }" @click="regexMode = 'patterns'">模板</span>
           </template>
           <template v-else-if="modalData.actionType === 'color'">
-            <span class="action-btn picker-btn" @click="openColorPicker">
-              <input type="color" ref="colorPickerInput" @input="onColorPicked" class="color-picker-input" />
-              调色盘
-            </span>
-            <span class="action-btn" @click="colorConvert">转换</span>
             <span class="action-btn" @click="colorComplement">互补色</span>
-            <span class="action-btn" @click="colorPalette">色板</span>
             <span class="action-btn" @click="colorLighter">变亮</span>
             <span class="action-btn" @click="colorDarker">变暗</span>
           </template>
@@ -1844,9 +1838,20 @@ const colorConvert = () => {
   }
 };
 const colorComplement = () => {
-  const comp = colorConverter.getComplementary(textContent.value);
+  // 使用当前颜色选择器中的颜色
+  const sourceColor = colorHex.value || textContent.value;
+  const comp = colorConverter.getComplementary(sourceColor);
   if (typeof comp === 'string') {
-    textContent.value = `原色: ${textContent.value}\n互补色: ${comp}`;
+    // 更新颜色选择器
+    colorHex.value = comp;
+    const parsed = colorConverter.parseColor(comp);
+    if (parsed) {
+      colorR.value = parsed.r;
+      colorG.value = parsed.g;
+      colorB.value = parsed.b;
+    }
+    generatedPalette.value = colorConverter.generatePalette(comp);
+    ElMessage.success(`互补色: ${comp}`);
   } else {
     ElMessage.error('无法获取互补色');
   }
@@ -1860,15 +1865,41 @@ const colorPalette = () => {
   }
 };
 const colorLighter = () => {
-  const lighter = colorConverter.adjustBrightness(textContent.value, 20);
+  // 使用当前颜色选择器中的颜色
+  const sourceColor = colorHex.value || textContent.value;
+  const lighter = colorConverter.adjustBrightness(sourceColor, 20);
   if (typeof lighter === 'string') {
-    textContent.value = lighter;
+    // 更新颜色选择器
+    colorHex.value = lighter;
+    const parsed = colorConverter.parseColor(lighter);
+    if (parsed) {
+      colorR.value = parsed.r;
+      colorG.value = parsed.g;
+      colorB.value = parsed.b;
+    }
+    generatedPalette.value = colorConverter.generatePalette(lighter);
+    ElMessage.success(`变亮: ${lighter}`);
+  } else {
+    ElMessage.error('无法调整亮度');
   }
 };
 const colorDarker = () => {
-  const darker = colorConverter.adjustBrightness(textContent.value, -20);
+  // 使用当前颜色选择器中的颜色
+  const sourceColor = colorHex.value || textContent.value;
+  const darker = colorConverter.adjustBrightness(sourceColor, -20);
   if (typeof darker === 'string') {
-    textContent.value = darker;
+    // 更新颜色选择器
+    colorHex.value = darker;
+    const parsed = colorConverter.parseColor(darker);
+    if (parsed) {
+      colorR.value = parsed.r;
+      colorG.value = parsed.g;
+      colorB.value = parsed.b;
+    }
+    generatedPalette.value = colorConverter.generatePalette(darker);
+    ElMessage.success(`变暗: ${darker}`);
+  } else {
+    ElMessage.error('无法调整亮度');
   }
 };
 
