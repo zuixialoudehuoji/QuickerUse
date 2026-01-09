@@ -60,6 +60,18 @@
         "to": "MouseHook.exe"
       },
       {
+        "from": "resources/Bridge.exe",
+        "to": "Bridge.exe"
+      },
+      {
+        "from": "resources/CryptoCore.dll",
+        "to": "CryptoCore.dll"
+      },
+      {
+        "from": "resources/license.txt",
+        "to": "license.txt"
+      },
+      {
         "from": "resources/icon.png",
         "to": "icon.png"
       },
