@@ -8,9 +8,12 @@
     :fullscreen="true"
   >
     <el-tabs v-model="activeTab" class="settings-tabs">
-      <!-- 外观设置 -->
-      <el-tab-pane label="外观" name="appearance">
+      <!-- 基础设置（合并外观和数据） -->
+      <el-tab-pane label="基础设置" name="basic">
         <div class="setting-group">
+          <!-- 外观设置部分 -->
+          <div class="setting-section-title">外观</div>
+
           <div class="setting-row">
             <span class="setting-label">显示模式</span>
             <el-select v-model="localSettings.mode" size="small" @change="handleSettingChange">
@@ -59,6 +62,100 @@
               size="small"
               @change="handleSettingChange"
             />
+          </div>
+
+          <!-- 数据设置部分 -->
+          <el-divider />
+          <div class="setting-section-title">启动与行为</div>
+
+          <div class="setting-row">
+            <span class="setting-label">开机自动启动</span>
+            <el-switch v-model="autoStart" @change="updateAutoStart" />
+          </div>
+
+          <div class="setting-row">
+            <span class="setting-label">启动后最小化到托盘</span>
+            <el-switch v-model="startMinimized" @change="updateStartMinimized" />
+          </div>
+
+          <div class="setting-row">
+            <span class="setting-label">中键唤醒 (仅Windows)</span>
+            <el-switch v-model="middleClickEnabled" @change="updateMiddleClick" />
+          </div>
+
+          <div class="setting-row">
+            <span class="setting-label">智能环境感知</span>
+            <el-switch v-model="envSensingEnabled" @change="updateEnvSensing" />
+          </div>
+          <div class="setting-hint">
+            根据当前使用的应用自动调整推荐功能顺序
+          </div>
+
+          <el-divider />
+          <div class="setting-section-title">服务配置</div>
+
+          <div class="setting-row">
+            <span class="setting-label">搜索引擎</span>
+            <el-select v-model="localSettings.searchEngine" size="small" @change="handleSettingChange">
+              <el-option value="google" label="Google" />
+              <el-option value="baidu" label="百度" />
+              <el-option value="bing" label="Bing" />
+              <el-option value="duckduckgo" label="DuckDuckGo" />
+            </el-select>
+          </div>
+
+          <div class="setting-row">
+            <span class="setting-label">翻译服务</span>
+            <el-select v-model="localSettings.translateService" size="small" @change="handleSettingChange">
+              <el-option value="google" label="Google翻译" />
+              <el-option value="deepl" label="DeepL" />
+              <el-option value="baidu" label="百度翻译" />
+              <el-option value="youdao" label="有道翻译" />
+            </el-select>
+          </div>
+
+          <div class="setting-row">
+            <span class="setting-label">密钥管理</span>
+            <el-button size="small" @click="showSecretManager = true">
+              <el-icon><Key /></el-icon>
+              管理密钥
+            </el-button>
+          </div>
+
+          <el-divider />
+          <div class="setting-section-title">配置管理</div>
+
+          <div class="setting-row">
+            <span class="setting-label">导出配置</span>
+            <el-button size="small" @click="handleExportConfig">
+              导出到文件
+            </el-button>
+          </div>
+          <div class="setting-hint">
+            将当前配置导出为 JSON 文件，便于备份或迁移
+          </div>
+
+          <div class="setting-row">
+            <span class="setting-label">导入配置</span>
+            <el-button size="small" @click="handleImportConfig">
+              从文件导入
+            </el-button>
+          </div>
+          <div class="setting-hint">
+            从 JSON 文件导入配置，导入后需重启应用生效
+          </div>
+
+          <el-divider />
+
+          <div class="danger-zone">
+            <div class="danger-buttons">
+              <el-button type="danger" size="small" @click="handleResetTools">
+                重置我的工具
+              </el-button>
+              <el-button type="danger" size="small" plain @click="handleResetAll">
+                恢复默认设置
+              </el-button>
+            </div>
           </div>
         </div>
       </el-tab-pane>
@@ -113,75 +210,7 @@
 
       <!-- 轮盘菜单 -->
       <el-tab-pane label="轮盘菜单" name="radial">
-        <RadialMenuSettings ref="radialSettingsRef" @save="onRadialSettingsSave" />
-      </el-tab-pane>
-
-      <!-- 数据管理 -->
-      <el-tab-pane label="数据" name="data">
-        <div class="setting-group">
-          <div class="setting-row">
-            <span class="setting-label">开机自动启动</span>
-            <el-switch v-model="autoStart" @change="updateAutoStart" />
-          </div>
-
-          <div class="setting-row">
-            <span class="setting-label">启动后最小化到托盘</span>
-            <el-switch v-model="startMinimized" @change="updateStartMinimized" />
-          </div>
-
-          <div class="setting-row">
-            <span class="setting-label">中键唤醒 (仅Windows)</span>
-            <el-switch v-model="middleClickEnabled" @change="updateMiddleClick" />
-          </div>
-
-          <div class="setting-row">
-            <span class="setting-label">智能环境感知</span>
-            <el-switch v-model="envSensingEnabled" @change="updateEnvSensing" />
-          </div>
-          <div class="setting-hint">
-            根据当前使用的应用自动调整推荐功能顺序
-          </div>
-          <div class="setting-row">
-            <span class="setting-label">搜索引擎</span>
-            <el-select v-model="localSettings.searchEngine" size="small" @change="handleSettingChange">
-              <el-option value="google" label="Google" />
-              <el-option value="baidu" label="百度" />
-              <el-option value="bing" label="Bing" />
-              <el-option value="duckduckgo" label="DuckDuckGo" />
-            </el-select>
-          </div>
-
-          <div class="setting-row">
-            <span class="setting-label">翻译服务</span>
-            <el-select v-model="localSettings.translateService" size="small" @change="handleSettingChange">
-              <el-option value="google" label="Google翻译" />
-              <el-option value="deepl" label="DeepL" />
-              <el-option value="baidu" label="百度翻译" />
-              <el-option value="youdao" label="有道翻译" />
-            </el-select>
-          </div>
-
-          <div class="setting-row">
-            <span class="setting-label">密钥管理</span>
-            <el-button size="small" @click="showSecretManager = true">
-              <el-icon><Key /></el-icon>
-              管理密钥
-            </el-button>
-          </div>
-
-          <el-divider />
-
-          <div class="danger-zone">
-            <div class="danger-buttons">
-              <el-button type="danger" size="small" @click="handleResetTools">
-                重置我的工具
-              </el-button>
-              <el-button type="danger" size="small" plain @click="handleResetAll">
-                恢复默认设置
-              </el-button>
-            </div>
-          </div>
-        </div>
+        <RadialMenuSettings ref="radialSettingsRef" :visible="activeTab === 'radial'" @save="onRadialSettingsSave" />
       </el-tab-pane>
     </el-tabs>
 
@@ -268,7 +297,7 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue', 'settings-change', 'hotkeys-change', 'reset-tools', 'reset-all', 'radial-settings-change']);
 
 const visible = ref(props.modelValue);
-const activeTab = ref('appearance');
+const activeTab = ref('basic');
 const localSettings = reactive({ ...DEFAULT_SETTINGS, ...props.settings });
 const localHotkeys = reactive({ ...props.hotkeys });
 const radialSettingsRef = ref(null);
@@ -298,6 +327,10 @@ watch(() => props.modelValue, (val) => {
 
 watch(visible, (val) => {
   emit('update:modelValue', val);
+  // 打开设置弹窗时刷新轮盘设置中的自定义工具列表
+  if (val && radialSettingsRef.value && radialSettingsRef.value.refreshCustomActions) {
+    radialSettingsRef.value.refreshCustomActions();
+  }
 });
 
 watch(() => props.settings, (val) => {
@@ -455,6 +488,49 @@ const handleResetAll = async () => {
   } catch {}
 };
 
+// 配置导出
+const handleExportConfig = () => {
+  if (window.api) {
+    // 先收集 localStorage 中的配置
+    const localStorageConfig = {};
+    const keysToExport = [
+      'radial-menu-settings',
+      'custom-actions',
+      'settings',
+      'hotkeys',
+      'feature-order',
+      'hidden-features'
+    ];
+    keysToExport.forEach(key => {
+      const value = localStorage.getItem(key);
+      if (value) {
+        try {
+          localStorageConfig[key] = JSON.parse(value);
+        } catch {
+          localStorageConfig[key] = value;
+        }
+      }
+    });
+    // 先保存到主进程配置中，然后导出
+    window.api.send('config-action', {
+      action: 'set',
+      key: 'localStorageBackup',
+      value: localStorageConfig
+    });
+    // 稍等一下让配置保存，然后导出
+    setTimeout(() => {
+      window.api.send('export-config');
+    }, 100);
+  }
+};
+
+// 配置导入
+const handleImportConfig = () => {
+  if (window.api) {
+    window.api.send('import-config');
+  }
+};
+
 // 密钥管理
 const saveSecret = () => {
   if (!secretKey.value || !secretValue.value) return;
@@ -560,6 +636,39 @@ onMounted(() => {
     window.api.on('middle-click-status', ({ enabled }) => {
       middleClickEnabled.value = enabled;
     });
+    // 配置导出结果
+    window.api.on('export-config-result', (result) => {
+      if (result.canceled) return;
+      if (result.success) {
+        ElMessage.success('配置已导出到: ' + result.path);
+      } else {
+        ElMessage.error('导出失败: ' + (result.error || '未知错误'));
+      }
+    });
+    // 配置导入结果
+    window.api.on('import-config-result', (result) => {
+      if (result.canceled) return;
+      if (result.success) {
+        // 恢复 localStorage 数据
+        if (result.localStorageBackup) {
+          Object.entries(result.localStorageBackup).forEach(([key, value]) => {
+            try {
+              localStorage.setItem(key, typeof value === 'string' ? value : JSON.stringify(value));
+              console.log('[Settings] Restored localStorage:', key);
+            } catch (e) {
+              console.error('[Settings] Failed to restore localStorage:', key, e);
+            }
+          });
+        }
+        ElMessage.success('配置导入成功，正在刷新页面...');
+        // 刷新页面以应用新配置
+        setTimeout(() => {
+          window.location.reload();
+        }, 1000);
+      } else {
+        ElMessage.error('导入失败: ' + (result.error || '未知错误'));
+      }
+    });
     window.api.send('secret-action', { action: 'list' });
     window.api.send('config-action', { action: 'get', key: 'startMinimized' });
     window.api.send('get-auto-start');
@@ -606,10 +715,29 @@ onMounted(() => {
   flex-shrink: 0;
 }
 
+.settings-tabs :deep(.el-tabs__nav-wrap) {
+  width: 100%;
+}
+
+.settings-tabs :deep(.el-tabs__nav-scroll) {
+  width: 100%;
+}
+
+.settings-tabs :deep(.el-tabs__nav) {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+}
+
 .settings-tabs :deep(.el-tabs__item) {
   font-size: 12px;
   padding: 0 10px;
   height: 32px;
+  flex: none;
+}
+
+.settings-tabs :deep(.el-tabs__active-bar) {
+  display: none;
 }
 
 .settings-tabs :deep(.el-tabs__content) {
@@ -644,6 +772,15 @@ onMounted(() => {
   font-size: 12px;
   color: var(--text-color);
   flex-shrink: 0;
+}
+
+.setting-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent-color);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
 }
 
 .setting-hint {

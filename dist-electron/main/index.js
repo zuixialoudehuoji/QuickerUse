@@ -175,9 +175,27 @@ const systemTools = {
     return process.platform === "win32" ? "C:\\Windows\\System32\\drivers\\etc\\hosts" : "/etc/hosts";
   },
   /**
+   * 打开 Hosts 文件所在目录
+   */
+  openHostsFolder() {
+    const hostsPath = this.getHostsPath();
+    const hostsDir = path.dirname(hostsPath);
+    if (process.platform === "win32") {
+      child_process.exec(`explorer "${hostsDir}"`);
+    } else if (process.platform === "darwin") {
+      child_process.exec(`open "${hostsDir}"`);
+    } else {
+      child_process.exec(`xdg-open "${hostsDir}"`);
+    }
+    return { success: true, message: "已打开 Hosts 目录" };
+  },
+  /**
    * 切换 Hosts (需要管理员权限)
    */
   switchHosts(content) {
+    if (!content || content === "127.0.0.1 quicker.local") {
+      return this.openHostsFolder();
+    }
     const hostsPath = this.getHostsPath();
     try {
       fs.copyFileSync(hostsPath, `${hostsPath}.bak`);
@@ -11466,17 +11484,51 @@ const secretManager = {
   }
 };
 const CONFIG_FILE = path.join(electron.app.getPath("userData"), "config.json");
+const isDev$2 = process.env.NODE_ENV === "development";
+const getResourcePath$1 = (filename) => {
+  if (isDev$2) {
+    return path.join(__dirname, "../../resources", filename);
+  }
+  return path.join(process.resourcesPath, filename);
+};
+const DEFAULT_CONFIG_FILE = getResourcePath$1("default-config.json");
 let configCache = {
   startMinimized: true,
   minimizeToTrayOnClose: false
 };
+function isFirstLaunch() {
+  return !fs.existsSync(CONFIG_FILE);
+}
+function loadDefaultConfig() {
+  try {
+    if (fs.existsSync(DEFAULT_CONFIG_FILE)) {
+      const data = JSON.parse(fs.readFileSync(DEFAULT_CONFIG_FILE, "utf-8"));
+      console.log("[ConfigManager] Loaded default config from resources");
+      return data;
+    }
+  } catch (e) {
+    console.error("[ConfigManager] Failed to load default config:", e);
+  }
+  return null;
+}
 function loadConfig() {
+  if (isFirstLaunch()) {
+    console.log("[ConfigManager] First launch detected");
+    const defaultConfig = loadDefaultConfig();
+    if (defaultConfig) {
+      configCache = { ...configCache, ...defaultConfig };
+      saveConfig();
+      console.log("[ConfigManager] Default config applied and saved");
+      return;
+    }
+  }
   if (fs.existsSync(CONFIG_FILE)) {
     try {
       const data = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8"));
       configCache = { ...configCache, ...data };
+      console.log("[ConfigManager] User config loaded");
     } catch (e) {
-      console.error("Failed to load config:", e);
+      console.error("[ConfigManager] Failed to load config:", e);
     }
   }
 }
@@ -11485,9 +11537,37 @@ function saveConfig() {
     fs.writeFileSync(CONFIG_FILE, JSON.stringify(configCache, null, 2));
     return true;
   } catch (e) {
-    console.error("Failed to save config:", e);
+    console.error("[ConfigManager] Failed to save config:", e);
     return false;
   }
+}
+function exportFullConfig(targetPath) {
+  try {
+    fs.writeFileSync(targetPath, JSON.stringify(configCache, null, 2));
+    console.log("[ConfigManager] Config exported to:", targetPath);
+    return { success: true, path: targetPath };
+  } catch (e) {
+    console.error("[ConfigManager] Export failed:", e);
+    return { success: false, error: e.message };
+  }
+}
+function importConfig(sourcePath) {
+  try {
+    if (!fs.existsSync(sourcePath)) {
+      return { success: false, error: "文件不存在" };
+    }
+    const data = JSON.parse(fs.readFileSync(sourcePath, "utf-8"));
+    configCache = { ...configCache, ...data };
+    saveConfig();
+    console.log("[ConfigManager] Config imported from:", sourcePath);
+    return { success: true };
+  } catch (e) {
+    console.error("[ConfigManager] Import failed:", e);
+    return { success: false, error: e.message };
+  }
+}
+function getConfigPath() {
+  return CONFIG_FILE;
 }
 loadConfig();
 const configManager = {
@@ -11500,7 +11580,11 @@ const configManager = {
   },
   getAll() {
     return configCache;
-  }
+  },
+  exportFullConfig,
+  importConfig,
+  getConfigPath,
+  isFirstLaunch
 };
 class ClipboardHistory {
   constructor(options = {}) {
@@ -11893,6 +11977,197 @@ class ClipboardHistory {
     }));
   }
 }
+const isDev$1 = process.env.NODE_ENV === "development";
+const getLicenseFilePath = () => {
+  if (isDev$1) {
+    return path.join(__dirname, "../../resources/license.txt");
+  }
+  return path.join(process.resourcesPath, "license.txt");
+};
+const getBridgePath = () => {
+  if (isDev$1) {
+    return path.join(__dirname, "../../resources/Bridge.exe");
+  }
+  return path.join(process.resourcesPath, "Bridge.exe");
+};
+let licenseCache = {
+  isValid: false,
+  remainingDays: 0,
+  message: "",
+  lastCheck: 0
+};
+function decryptAndValidate(encryptedKey) {
+  return new Promise((resolve) => {
+    if (!encryptedKey || encryptedKey.trim().length === 0) {
+      resolve({
+        valid: false,
+        remainingDays: 0,
+        expireDate: "",
+        message: "密钥不能为空"
+      });
+      return;
+    }
+    const bridgePath2 = getBridgePath();
+    if (!fs.existsSync(bridgePath2)) {
+      console.error("[LicenseManager] Bridge.exe not found:", bridgePath2);
+      resolve({
+        valid: false,
+        remainingDays: 0,
+        expireDate: "",
+        message: "验证程序不存在"
+      });
+      return;
+    }
+    const child = child_process.execFile(bridgePath2, ["validate", encryptedKey.trim()], {
+      encoding: "utf-8",
+      timeout: 1e4,
+      windowsHide: true
+    }, (error, stdout, stderr) => {
+      if (error) {
+        console.error("[LicenseManager] Validation error:", error.message);
+        resolve({
+          valid: false,
+          remainingDays: 0,
+          expireDate: "",
+          message: "密钥验证失败: " + error.message
+        });
+        return;
+      }
+      try {
+        console.log("[LicenseManager] Bridge.exe output:", stdout);
+        const data = JSON.parse(stdout.trim());
+        if (data.valid) {
+          const expiryDate = new Date(data.expiry);
+          const now = /* @__PURE__ */ new Date();
+          const remainingMs = expiryDate.getTime() - now.getTime();
+          const remainingDays = Math.max(0, Math.ceil(remainingMs / (1e3 * 60 * 60 * 24)));
+          resolve({
+            valid: true,
+            remainingDays,
+            expireDate: data.expiry.split(" ")[0],
+            message: "授权有效"
+          });
+        } else {
+          resolve({
+            valid: false,
+            remainingDays: 0,
+            expireDate: "",
+            message: data.message || "授权无效或已过期"
+          });
+        }
+      } catch (e) {
+        console.error("[LicenseManager] Parse error:", e.message);
+        resolve({
+          valid: false,
+          remainingDays: 0,
+          expireDate: "",
+          message: "验证结果解析失败"
+        });
+      }
+    });
+    child.on("close", () => {
+      child.removeAllListeners();
+    });
+  });
+}
+function readLicenseFromFile() {
+  try {
+    const licensePath = getLicenseFilePath();
+    if (fs.existsSync(licensePath)) {
+      const content = fs.readFileSync(licensePath, "utf-8");
+      return content.replace(/\s+/g, "");
+    }
+  } catch (e) {
+    console.error("[LicenseManager] Failed to read license file:", e.message);
+  }
+  return "";
+}
+function saveLicenseToFile(licenseKey) {
+  try {
+    const licensePath = getLicenseFilePath();
+    fs.writeFileSync(licensePath, licenseKey.replace(/\s+/g, ""), "utf-8");
+    return true;
+  } catch (e) {
+    console.error("[LicenseManager] Failed to save license file:", e.message);
+    return false;
+  }
+}
+async function validateLicense() {
+  const licenseKey = readLicenseFromFile();
+  if (!licenseKey) {
+    licenseCache = {
+      isValid: false,
+      remainingDays: 0,
+      message: "未找到授权密钥，请输入有效密钥",
+      lastCheck: Date.now()
+    };
+    return licenseCache;
+  }
+  const result = await decryptAndValidate(licenseKey);
+  licenseCache = {
+    isValid: result.valid,
+    remainingDays: result.remainingDays,
+    message: result.message,
+    expireDate: result.expireDate,
+    lastCheck: Date.now()
+  };
+  return licenseCache;
+}
+async function activateLicense(newKey) {
+  if (!newKey || newKey.trim().length === 0) {
+    return {
+      success: false,
+      isValid: false,
+      remainingDays: 0,
+      message: "密钥不能为空"
+    };
+  }
+  const result = await decryptAndValidate(newKey);
+  if (result.valid) {
+    const saved = saveLicenseToFile(newKey);
+    if (saved) {
+      licenseCache = {
+        isValid: true,
+        remainingDays: result.remainingDays,
+        message: result.message,
+        expireDate: result.expireDate,
+        lastCheck: Date.now()
+      };
+      return {
+        success: true,
+        isValid: true,
+        remainingDays: result.remainingDays,
+        expireDate: result.expireDate,
+        message: "激活成功！剩余 " + result.remainingDays + " 天"
+      };
+    } else {
+      return {
+        success: false,
+        isValid: false,
+        remainingDays: 0,
+        message: "密钥保存失败"
+      };
+    }
+  } else {
+    return {
+      success: false,
+      isValid: false,
+      remainingDays: 0,
+      message: result.message || "密钥无效"
+    };
+  }
+}
+function getLicenseStatus() {
+  return licenseCache;
+}
+const licenseManager = {
+  validateLicense,
+  activateLicense,
+  getLicenseStatus,
+  getLicenseFilePath,
+  readLicenseFromFile,
+  saveLicenseToFile
+};
 let clipboardHistory = null;
 let mainWindow = null;
 let tray = null;
@@ -11908,7 +12183,14 @@ let radialMenuWindow = null;
 let preloadedDialogWindow = null;
 let preloadTimer = null;
 let cleanupFunctions = [];
+let windowCleanupTimer = null;
 const isDev = process.env.NODE_ENV === "development";
+if (!isDev) {
+  const noop = () => {
+  };
+  console.log = noop;
+  console.debug = noop;
+}
 const getResourcePath = (filename) => {
   if (isDev) {
     return path.join(__dirname, "../../resources", filename);
@@ -11917,6 +12199,152 @@ const getResourcePath = (filename) => {
 };
 const mouseHookPath = getResourcePath("MouseHook.exe");
 let middleClickEnabled = true;
+let summonMode = "popup";
+const bridgePath = getResourcePath("Bridge.exe");
+electron.ipcMain.handle("validate-license", async (event, token) => {
+  return new Promise((resolve) => {
+    child_process.execFile(bridgePath, ["validate", token], (error, stdout, stderr) => {
+      if (error) {
+        resolve({ success: false, error: error.message });
+      } else {
+        try {
+          const result = JSON.parse(stdout.trim());
+          resolve({ success: true, data: result });
+        } catch (e) {
+          resolve({ success: false, error: "Invalid response from bridge." });
+        }
+      }
+    });
+  });
+});
+const translateLicenseMessage = (msg) => {
+  if (!msg) return "未知错误";
+  const translations = {
+    "Valid license.": "授权有效",
+    "Invalid license format.": "授权格式无效",
+    "Invalid license signature.": "授权签名无效",
+    "License not bound to this hardware.": "授权未绑定到此设备",
+    "Decryption failed or invalid key.": "解密失败或密钥无效",
+    "No valid network adapters found.": "未找到有效的网络适配器"
+  };
+  if (msg.startsWith("License expired on")) {
+    const dateMatch = msg.match(/License expired on (.+)\./);
+    if (dateMatch) {
+      return `授权已于 ${dateMatch[1]} 过期`;
+    }
+    return "授权已过期";
+  }
+  if (msg.startsWith("Error:")) {
+    return "错误: " + msg.substring(6).trim();
+  }
+  return translations[msg] || msg;
+};
+electron.ipcMain.on("license-validate", (event) => {
+  console.log("[LicenseManager] license-validate received");
+  try {
+    const licenseKey = licenseManager.readLicenseFromFile();
+    console.log("[LicenseManager] License key length:", licenseKey ? licenseKey.length : 0);
+    if (!licenseKey) {
+      console.log("[LicenseManager] No license key found");
+      event.reply("license-status", {
+        isValid: false,
+        remainingDays: 0,
+        message: "未找到授权密钥，请输入有效密钥"
+      });
+      return;
+    }
+    console.log("[LicenseManager] Calling Bridge.exe...");
+    child_process.execFile(bridgePath, ["validate", licenseKey], { timeout: 1e4, windowsHide: true }, (error, stdout) => {
+      if (error) {
+        console.error("[LicenseManager] Bridge.exe error:", error.message);
+        event.reply("license-status", {
+          isValid: false,
+          remainingDays: 0,
+          message: "验证失败: " + error.message
+        });
+        return;
+      }
+      try {
+        console.log("[LicenseManager] Bridge.exe output:", stdout);
+        const data = JSON.parse(stdout.trim());
+        if (data.valid) {
+          const expiryDate = new Date(data.expiry);
+          const remainingDays = Math.max(0, Math.ceil((expiryDate - /* @__PURE__ */ new Date()) / (1e3 * 60 * 60 * 24)));
+          console.log("[LicenseManager] License valid, days remaining:", remainingDays);
+          event.reply("license-status", {
+            isValid: true,
+            remainingDays,
+            expireDate: data.expiry.split(" ")[0],
+            message: "授权有效"
+          });
+        } else {
+          console.log("[LicenseManager] License invalid:", data.message);
+          event.reply("license-status", {
+            isValid: false,
+            remainingDays: 0,
+            message: translateLicenseMessage(data.message)
+          });
+        }
+      } catch (e) {
+        console.error("[LicenseManager] Parse error:", e.message);
+        event.reply("license-status", {
+          isValid: false,
+          remainingDays: 0,
+          message: "解析失败"
+        });
+      }
+    });
+  } catch (e) {
+    console.error("[LicenseManager] Exception:", e.message);
+    event.reply("license-status", {
+      isValid: false,
+      remainingDays: 0,
+      message: "验证异常: " + e.message
+    });
+  }
+});
+electron.ipcMain.on("license-activate", (event, licenseKey) => {
+  console.log("[LicenseManager] license-activate received");
+  if (!licenseKey || !licenseKey.trim()) {
+    event.reply("license-activate-result", { success: false, message: "密钥不能为空" });
+    return;
+  }
+  child_process.execFile(bridgePath, ["validate", licenseKey.trim()], { timeout: 1e4, windowsHide: true }, (error, stdout) => {
+    if (error) {
+      event.reply("license-activate-result", { success: false, message: "验证失败: " + error.message });
+      return;
+    }
+    try {
+      const data = JSON.parse(stdout.trim());
+      if (data.valid) {
+        const saved = licenseManager.saveLicenseToFile(licenseKey.trim());
+        if (saved) {
+          const expiryDate = new Date(data.expiry);
+          const remainingDays = Math.max(0, Math.ceil((expiryDate - /* @__PURE__ */ new Date()) / (1e3 * 60 * 60 * 24)));
+          const result = {
+            success: true,
+            isValid: true,
+            remainingDays,
+            expireDate: data.expiry.split(" ")[0],
+            message: "激活成功！剩余 " + remainingDays + " 天"
+          };
+          event.reply("license-activate-result", result);
+          event.reply("license-status", result);
+        } else {
+          event.reply("license-activate-result", { success: false, message: "密钥保存失败" });
+        }
+      } else {
+        event.reply("license-activate-result", { success: false, message: translateLicenseMessage(data.message) });
+      }
+    } catch (e) {
+      event.reply("license-activate-result", { success: false, message: "解析失败" });
+    }
+  });
+});
+electron.ipcMain.on("license-get-status", (event) => {
+  const result = licenseManager.getLicenseStatus();
+  event.reply("license-status", result);
+});
 function updateTrayIcon() {
   if (tray && normalIconImage && disabledIconImage) {
     const icon = isAppDisabled ? disabledIconImage : normalIconImage;
@@ -11954,6 +12382,14 @@ const SPECIAL_ACTIONS = {
   // 取色器
   "lock-screen": "system-action",
   // 锁屏
+  "open-explorer": "system-action",
+  // 打开我的电脑
+  "minimize-all": "system-action",
+  // 最小化全部
+  "switch-hosts": "system-action",
+  // Hosts目录
+  "open-regedit": "system-action",
+  // 打开注册表
   "search-google": "web-search",
   // 搜索
   "translate": "web-translate"
@@ -12088,7 +12524,13 @@ function registerGlobalShortcut(shortcut) {
       console.warn(`${shortcut} 已被注册，尝试强制覆盖`);
     }
     const ret = electron.globalShortcut.register(shortcut, () => {
-      activateApp(null, true);
+      if (summonMode === "radial" && globalCreateRadialMenuWindow) {
+        const cursorPoint = electron.screen.getCursorScreenPoint();
+        console.log("[Hotkey] Opening radial menu at:", cursorPoint.x, cursorPoint.y);
+        globalCreateRadialMenuWindow(cursorPoint.x, cursorPoint.y);
+      } else {
+        activateApp(null, true);
+      }
     });
     registerSmartHotkeys();
     registerCustomHotkeys();
@@ -12103,6 +12545,17 @@ function registerGlobalShortcut(shortcut) {
 }
 let cachedSmartHotkeys = {};
 let cachedCustomHotkeys = {};
+let hotkeyRegistrationTimer = null;
+function debouncedRegisterHotkeys() {
+  if (hotkeyRegistrationTimer) {
+    clearTimeout(hotkeyRegistrationTimer);
+  }
+  hotkeyRegistrationTimer = setTimeout(() => {
+    hotkeyRegistrationTimer = null;
+    console.log("[Hotkey] Debounced registration triggered");
+    registerGlobalShortcut(globalHotkey);
+  }, 100);
+}
 function registerSmartHotkeys() {
   const validModifiers = ["Alt", "Ctrl", "Control", "Shift", "Command", "Cmd", "Super", "Meta"];
   for (const [action, key2] of Object.entries(cachedSmartHotkeys)) {
@@ -12168,7 +12621,7 @@ function registerCustomHotkeys() {
   }
 }
 async function createWindow() {
-  var _a;
+  var _a, _b, _c;
   const primaryDisplay = electron.screen.getPrimaryDisplay();
   const { width, height } = primaryDisplay.workAreaSize;
   mainWindow = new electron.BrowserWindow({
@@ -12230,7 +12683,7 @@ async function createWindow() {
   electron.ipcMain.on("update-global-hotkey", (event, newHotkey) => {
     if (newHotkey && typeof newHotkey === "string") {
       globalHotkey = newHotkey;
-      registerGlobalShortcut(globalHotkey);
+      debouncedRegisterHotkeys();
     } else {
       console.warn("Received invalid global hotkey:", newHotkey);
     }
@@ -12238,35 +12691,72 @@ async function createWindow() {
   electron.ipcMain.on("update-smart-hotkeys", (event, hotkeys) => {
     cachedSmartHotkeys = hotkeys;
     configManager.set("smartHotkeys", hotkeys);
-    registerGlobalShortcut(globalHotkey);
+    debouncedRegisterHotkeys();
   });
   electron.ipcMain.on("update-custom-hotkeys", (event, hotkeys) => {
     cachedCustomHotkeys = hotkeys;
     configManager.set("customHotkeys", hotkeys);
-    registerGlobalShortcut(globalHotkey);
+    debouncedRegisterHotkeys();
   });
   const defaultRadialMenuSettings = {
-    enabled: true,
-    triggerMode: "rightLongPress",
-    longPressDelay: 400,
-    theme: "dark",
+    radius: 120,
+    // 轮盘半径 (80-200px)
+    layers: 2,
+    // 显示层数 (1-3)
     showHints: true,
-    menuItems: [
-      { id: "1", label: "JSON", icon: "📋", action: "json-format" },
-      { id: "2", label: "时间戳", icon: "⏰", action: "timestamp-convert" },
-      { id: "3", label: "计算器", icon: "🔢", action: "calculator" },
-      { id: "4", label: "编码", icon: "🔤", action: "encoder" },
-      { id: "5", label: "颜色", icon: "🎨", action: "color-convert" },
-      { id: "6", label: "AI", icon: "🤖", action: "ai-assistant" },
-      { id: "7", label: "剪贴板", icon: "📎", action: "clipboard-history" },
-      { id: "8", label: "取色", icon: "🎯", action: "pick-color" }
-    ]
+    customActions: [],
+    // 自定义功能列表
+    // slots[sector][layer] 格式: 8个扇区 x 3层
+    slots: [
+      // 扇区0: JSON相关
+      [{ icon: "📋", label: "JSON", action: "json-format" }, { icon: "🔍", label: "提取", action: "extract-info" }, null],
+      // 扇区1: 时间相关
+      [{ icon: "⏰", label: "时间戳", action: "timestamp-convert" }, { icon: "🔢", label: "计算器", action: "calculator" }, null],
+      // 扇区2: AI相关
+      [{ icon: "🤖", label: "AI", action: "ai-assistant" }, { icon: "📎", label: "剪贴板", action: "clipboard-history" }, null],
+      // 扇区3: 颜色相关
+      [{ icon: "🎨", label: "颜色", action: "color-convert" }, { icon: "🎯", label: "取色", action: "pick-color" }, null],
+      // 扇区4: 二维码
+      [{ icon: "📱", label: "二维码", action: "generate-qr" }, { icon: "👁️", label: "OCR", action: "ocr" }, null],
+      // 扇区5: 生成器
+      [{ icon: "🔑", label: "UUID", action: "generate-uuid" }, { icon: "🔐", label: "密码", action: "generate-password" }, null],
+      // 扇区6: 搜索翻译
+      [{ icon: "🌐", label: "搜索", action: "search-google" }, { icon: "🌍", label: "翻译", action: "translate" }, null],
+      // 扇区7: 其他
+      [{ icon: "⏳", label: "倒计时", action: "timer" }, { icon: "💡", label: "闪念", action: "memo" }, null]
+    ],
+    // 数字键快捷功能配置 (1-8)
+    quickSlots: [
+      { icon: "🔒", label: "锁屏", action: "lock-screen" },
+      { icon: "💻", label: "我的电脑", action: "open-explorer" },
+      { icon: "📥", label: "显示桌面", action: "minimize-all" },
+      { icon: "📁", label: "Hosts", action: "switch-hosts" },
+      { icon: "🎯", label: "取色", action: "pick-color" },
+      { icon: "📋", label: "注册表", action: "open-regedit" },
+      { icon: "⏳", label: "倒计时", action: "timer" },
+      { icon: "💡", label: "闪念", action: "memo" }
+    ],
+    menuItems: []
   };
   let radialMenuSettings = configManager.get("radialMenuSettings") || defaultRadialMenuSettings;
+  if (!radialMenuSettings.slots) {
+    radialMenuSettings.slots = defaultRadialMenuSettings.slots;
+  }
+  if (!radialMenuSettings.radius) {
+    radialMenuSettings.radius = defaultRadialMenuSettings.radius;
+  }
+  if (!radialMenuSettings.layers) {
+    radialMenuSettings.layers = defaultRadialMenuSettings.layers;
+  }
+  if (!radialMenuSettings.quickSlots || radialMenuSettings.quickSlots.length !== 8) {
+    radialMenuSettings.quickSlots = defaultRadialMenuSettings.quickSlots;
+  }
   console.log("[Main] Radial menu settings loaded:", {
-    enabled: radialMenuSettings.enabled,
-    triggerMode: radialMenuSettings.triggerMode,
-    menuItemsCount: ((_a = radialMenuSettings.menuItems) == null ? void 0 : _a.length) || 0
+    radius: radialMenuSettings.radius,
+    layers: radialMenuSettings.layers,
+    slotsCount: ((_a = radialMenuSettings.slots) == null ? void 0 : _a.length) || 0,
+    menuItemsCount: ((_b = radialMenuSettings.menuItems) == null ? void 0 : _b.length) || 0,
+    quickSlotsCount: ((_c = radialMenuSettings.quickSlots) == null ? void 0 : _c.length) || 0
   });
   let radialMenuPreCapturedText = "";
   async function createRadialMenuWindow(x, y) {
@@ -12278,6 +12768,14 @@ async function createWindow() {
     console.log("[RadialMenu] Captured text length:", radialMenuPreCapturedText.length);
     const primaryDisplay2 = electron.screen.getPrimaryDisplay();
     const { width: width2, height: height2 } = primaryDisplay2.workAreaSize;
+    const radius = radialMenuSettings.radius || 120;
+    const padding = radius + 30;
+    let adjustedX = x;
+    let adjustedY = y;
+    if (adjustedX < padding) adjustedX = padding;
+    if (adjustedX > width2 - padding) adjustedX = width2 - padding;
+    if (adjustedY < padding) adjustedY = padding;
+    if (adjustedY > height2 - padding) adjustedY = height2 - padding;
     radialMenuWindow = new electron.BrowserWindow({
       width: width2,
       height: height2,
@@ -12304,15 +12802,25 @@ async function createWindow() {
         query: { radialMenuMode: "true" }
       });
     }
+    radialMenuWindow.webContents.on("console-message", (event, level, message) => {
+      if (message.includes("[GlobalRadialMenu]") || message.includes("[RadialMenu]")) {
+        console.log("[RadialMenuWindow Console]", message);
+      }
+    });
+    radialMenuWindow.webContents.on("context-menu", (e) => {
+      e.preventDefault();
+    });
     radialMenuWindow.webContents.once("dom-ready", () => {
       if (radialMenuWindow && !radialMenuWindow.isDestroyed()) {
         radialMenuWindow.webContents.send("radial-menu-init", {
-          centerX: x,
-          centerY: y,
+          centerX: adjustedX,
+          centerY: adjustedY,
           settings: radialMenuSettings
         });
         radialMenuWindow.show();
         radialMenuWindow.focus();
+        radialMenuWindow.webContents.focus();
+        console.log("[Main] Radial menu shown at:", adjustedX, adjustedY);
       }
     });
     radialMenuWindow.on("blur", () => {
@@ -12323,7 +12831,6 @@ async function createWindow() {
     radialMenuWindow.on("closed", () => {
       radialMenuWindow = null;
     });
-    console.log("[Main] Radial menu window created at:", x, y);
   }
   globalCreateRadialMenuWindow = createRadialMenuWindow;
   electron.ipcMain.on("open-radial-menu", (event, { x, y }) => {
@@ -12338,16 +12845,39 @@ async function createWindow() {
       radialMenuWindow = null;
     }
   });
+  let lastRadialAction = { action: null, time: 0 };
   electron.ipcMain.on("radial-menu-action", async (event, { action, data }) => {
-    console.log("[Main] Radial menu action:", action, data);
+    console.log("[Main] ====== RADIAL MENU ACTION RECEIVED ======");
+    console.log("[Main] Action:", action);
+    const now = Date.now();
+    if (action === lastRadialAction.action && now - lastRadialAction.time < 500) {
+      console.log("[Main] Duplicate action ignored:", action);
+      return;
+    }
+    lastRadialAction = { action, time: now };
+    console.log("[Main] Data:", JSON.stringify(data));
     if (radialMenuWindow && !radialMenuWindow.isDestroyed()) {
       radialMenuWindow.destroy();
       radialMenuWindow = null;
     }
     if (action) {
+      if (action.startsWith("file:")) {
+        const filePath = action.substring(5);
+        console.log("[Main] Opening user file:", filePath);
+        electron.shell.openPath(filePath).catch((err) => {
+          console.error("[Main] Failed to open file:", err);
+        });
+        return;
+      }
+      if (action.startsWith("builtin:")) {
+        const builtinAction = action.substring(8);
+        console.log("[Main] Executing builtin action:", builtinAction);
+        electron.ipcMain.emit("radial-menu-action", event, { action: builtinAction, data });
+        return;
+      }
       const specialType = SPECIAL_ACTIONS[action];
       if (specialType) {
-        console.log("[Main] Handling special action:", action, specialType);
+        console.log("[Main] Special action detected:", action, "->", specialType);
         if (specialType === "color-picker") {
           setTimeout(() => {
             if (mainWindow && !mainWindow.isDestroyed()) {
@@ -12357,7 +12887,34 @@ async function createWindow() {
             electron.ipcMain.emit("pick-color", event);
           }, 100);
         } else if (specialType === "system-action") {
-          systemTools.lockScreen();
+          console.log("[Main] Executing system action:", action);
+          setTimeout(() => {
+            const { exec: execCmd } = require("child_process");
+            switch (action) {
+              case "lock-screen":
+                console.log("[Main] Calling systemTools.lockScreen()");
+                systemTools.lockScreen();
+                break;
+              case "open-explorer":
+                console.log("[Main] Opening explorer");
+                electron.shell.openPath("C:\\");
+                break;
+              case "minimize-all":
+                console.log("[Main] Calling minimize-all via shell");
+                execCmd('powershell -NoProfile -Command "(New-Object -ComObject Shell.Application).ToggleDesktop()"');
+                break;
+              case "switch-hosts":
+                console.log("[Main] Opening hosts folder");
+                electron.shell.openPath("C:\\Windows\\System32\\drivers\\etc");
+                break;
+              case "open-regedit":
+                console.log("[Main] Opening regedit");
+                execCmd("regedit");
+                break;
+              default:
+                console.warn("[Main] Unknown system action:", action);
+            }
+          }, 150);
         } else if (specialType === "web-search") {
           const text = radialMenuPreCapturedText || "";
           if (text.trim()) {
@@ -12377,21 +12934,35 @@ async function createWindow() {
         }
         return;
       }
+      if (action.startsWith("custom:")) {
+        const parts = action.split(":");
+        const customType = parts[1];
+        const customPath = parts.slice(2).join(":");
+        console.log("[Main] Custom action:", customType, customPath);
+        if (customType === "path") {
+          electron.shell.openExternal(customPath).catch((err) => {
+            console.error("[Main] Failed to open path:", err);
+          });
+        } else if (customType === "script") {
+          if (scriptManager && scriptManager.runScript) {
+            scriptManager.runScript(customPath);
+          }
+        }
+        return;
+      }
       const config = ACTION_TO_DIALOG[action];
-      if (config && global.createDialogWindow) {
-        const dialogData2 = {
-          title: config.title,
-          type: config.type,
-          actionType: config.actionType,
-          initialText: radialMenuPreCapturedText,
-          text: radialMenuPreCapturedText,
-          width: config.width,
-          height: config.height
-        };
-        global.createDialogWindow(dialogData2);
-        console.log("[Main] Dialog opened with pre-captured text, length:", radialMenuPreCapturedText.length);
+      if (config) {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send("trigger-smart-action", {
+            action,
+            text: radialMenuPreCapturedText
+          });
+          console.log("[Main] Sent action to mainWindow for consistent dialog, action:", action);
+        } else {
+          console.warn("[Main] Main window not available for action:", action);
+        }
       } else {
-        console.warn("[Main] Unknown action or createDialogWindow not available:", action);
+        console.warn("[Main] Unknown action:", action);
       }
     }
   });
@@ -12519,6 +13090,53 @@ async function createWindow() {
     if (args.action === "set") {
       configManager.set(args.key, args.value);
       event.reply("config-data", configManager.getAll());
+    }
+  });
+  electron.ipcMain.on("export-config", async (event) => {
+    const { dialog } = require("electron");
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: "导出配置文件",
+      defaultPath: `quickeruse-config-${Date.now()}.json`,
+      filters: [{ name: "JSON 文件", extensions: ["json"] }]
+    });
+    if (!result.canceled && result.filePath) {
+      const exportResult = configManager.exportFullConfig(result.filePath);
+      event.reply("export-config-result", exportResult);
+    } else {
+      event.reply("export-config-result", { success: false, canceled: true });
+    }
+  });
+  electron.ipcMain.on("import-config", async (event) => {
+    const { dialog } = require("electron");
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: "导入配置文件",
+      filters: [{ name: "JSON 文件", extensions: ["json"] }],
+      properties: ["openFile"]
+    });
+    if (!result.canceled && result.filePaths.length > 0) {
+      const importResult = configManager.importConfig(result.filePaths[0]);
+      if (importResult.success) {
+        const localStorageBackup = configManager.get("localStorageBackup");
+        if (localStorageBackup) {
+          importResult.localStorageBackup = localStorageBackup;
+        }
+      }
+      event.reply("import-config-result", importResult);
+    } else {
+      event.reply("import-config-result", { success: false, canceled: true });
+    }
+  });
+  electron.ipcMain.on("get-config-path", (event) => {
+    event.reply("config-path", configManager.getConfigPath());
+  });
+  electron.ipcMain.on("check-first-launch-config", (event) => {
+    const localStorageBackup = configManager.get("localStorageBackup");
+    const isFirstLaunch2 = configManager.get("_firstLaunchHandled") !== true;
+    if (isFirstLaunch2 && localStorageBackup) {
+      configManager.set("_firstLaunchHandled", true);
+      event.reply("first-launch-config", { localStorageBackup });
+    } else {
+      event.reply("first-launch-config", null);
     }
   });
   electron.ipcMain.on("open-image-window", (event, base64Data) => {
@@ -13024,7 +13642,7 @@ async function createWindow() {
   }
   preloadTimer = setTimeout(preloadDialogWindow, 1e3);
   function createDialogWindowInner(data) {
-    var _a2, _b;
+    var _a2, _b2;
     if (dialogWindow && !dialogWindow.isDestroyed()) {
       dialogWindow.destroy();
       dialogWindow = null;
@@ -13047,7 +13665,7 @@ async function createWindow() {
     };
     const size = {
       width: data.width || ((_a2 = dialogSizes[data.type]) == null ? void 0 : _a2.width) || 400,
-      height: data.height || ((_b = dialogSizes[data.type]) == null ? void 0 : _b.height) || 380
+      height: data.height || ((_b2 = dialogSizes[data.type]) == null ? void 0 : _b2.height) || 380
     };
     let dialogX = cursorPoint.x - size.width / 2;
     let dialogY = cursorPoint.y - 50;
@@ -13845,7 +14463,7 @@ async function createWindow() {
     }
   });
   electron.ipcMain.on("ai-chat", async (event, { requestId, endpoint, headers, body }) => {
-    var _a2, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
+    var _a2, _b2, _c2, _d, _e, _f, _g, _h, _i, _j, _k;
     console.log("[Main] AI chat request received:", { requestId, endpoint, model: body == null ? void 0 : body.model });
     if (!endpoint || !body) {
       console.error("[Main] AI chat: missing endpoint or body");
@@ -13902,7 +14520,7 @@ async function createWindow() {
             if (data === "[DONE]") continue;
             try {
               const parsed = JSON.parse(data);
-              const content = ((_d = (_c = (_b = parsed.choices) == null ? void 0 : _b[0]) == null ? void 0 : _c.delta) == null ? void 0 : _d.content) || "";
+              const content = ((_d = (_c2 = (_b2 = parsed.choices) == null ? void 0 : _b2[0]) == null ? void 0 : _c2.delta) == null ? void 0 : _d.content) || "";
               const claudeContent = ((_e = parsed.delta) == null ? void 0 : _e.text) || "";
               const newContent = content || claudeContent;
               if (newContent) {
@@ -13977,17 +14595,13 @@ function startMouseHook() {
     mouseHookProc.stdout.on("data", (data) => {
       const msg = data.toString().trim();
       if (msg.includes("MIDDLE_CLICK") && middleClickEnabled) {
-        console.log("[Main] Middle Click Detected");
-        activateApp();
-      }
-      if (msg.startsWith("RIGHT_LONG_PRESS")) {
-        const parts = msg.split(" ");
-        const x = parseInt(parts[1]) || 0;
-        const y = parseInt(parts[2]) || 0;
-        console.log("[Main] Right Long Press Detected at:", x, y);
-        const settings = configManager.get("radialMenuSettings") || {};
-        if (settings.enabled && settings.triggerMode === "rightLongPress" && globalCreateRadialMenuWindow) {
-          globalCreateRadialMenuWindow(x, y);
+        console.log("[Main] Middle Click Detected, summonMode:", summonMode);
+        if (summonMode === "radial" && globalCreateRadialMenuWindow) {
+          const cursorPoint = electron.screen.getCursorScreenPoint();
+          console.log("[Main] Opening radial menu at:", cursorPoint.x, cursorPoint.y);
+          globalCreateRadialMenuWindow(cursorPoint.x, cursorPoint.y);
+        } else {
+          activateApp();
         }
       }
     });
@@ -14086,6 +14700,32 @@ if (!gotTheLock) {
           },
           { type: "separator" },
           {
+            label: "召唤模式",
+            submenu: [
+              {
+                label: "弹框模式",
+                type: "radio",
+                checked: summonMode === "popup",
+                click: () => {
+                  summonMode = "popup";
+                  configManager.set("summonMode", "popup");
+                  tray.setContextMenu(buildTrayMenu());
+                }
+              },
+              {
+                label: "轮盘模式",
+                type: "radio",
+                checked: summonMode === "radial",
+                click: () => {
+                  summonMode = "radial";
+                  configManager.set("summonMode", "radial");
+                  tray.setContextMenu(buildTrayMenu());
+                }
+              }
+            ]
+          },
+          { type: "separator" },
+          {
             label: isAppDisabled ? "启用" : "禁用",
             click: () => {
               isAppDisabled = !isAppDisabled;
@@ -14128,6 +14768,9 @@ if (!gotTheLock) {
         tray.setContextMenu(buildTrayMenu());
       });
       console.log("[Main] Tray created successfully");
+      summonMode = configManager.get("summonMode") || "popup";
+      console.log("[Main] Loaded summonMode:", summonMode);
+      tray.setContextMenu(buildTrayMenu());
     } catch (err) {
       console.error("[Main] FAILED to create Tray:", err);
     }
@@ -14141,6 +14784,24 @@ if (!gotTheLock) {
     } else {
       console.log("[Main] MouseHook skipped:", process.platform !== "win32" ? "non-Windows platform" : "disabled by user");
     }
+    windowCleanupTimer = setInterval(() => {
+      const allWindows = electron.BrowserWindow.getAllWindows();
+      const validWindows = allWindows.filter((w) => !w.isDestroyed());
+      if (validWindows.length > 6) {
+        console.warn("[Main] Too many windows detected:", validWindows.length);
+        validWindows.forEach((w) => {
+          if (w !== mainWindow && w !== preloadedDialogWindow && !w.isVisible() && !w.isDestroyed()) {
+            console.log("[Main] Destroying hidden window");
+            w.destroy();
+          }
+        });
+      }
+      if (radialMenuWindow && !radialMenuWindow.isDestroyed() && !radialMenuWindow.isVisible()) {
+        console.log("[Main] Cleaning up invisible radial menu window");
+        radialMenuWindow.destroy();
+        radialMenuWindow = null;
+      }
+    }, 3e4);
     electron.app.on("activate", () => {
       if (electron.BrowserWindow.getAllWindows().length === 0) {
         createWindow();
@@ -14155,13 +14816,29 @@ electron.app.on("window-all-closed", () => {
 });
 electron.app.on("before-quit", () => {
   console.log("[Main] before-quit: cleaning up all resources");
+  if (windowCleanupTimer) {
+    clearInterval(windowCleanupTimer);
+    windowCleanupTimer = null;
+  }
+  if (hotkeyRegistrationTimer) {
+    clearTimeout(hotkeyRegistrationTimer);
+    hotkeyRegistrationTimer = null;
+  }
   if (preloadTimer) {
     clearTimeout(preloadTimer);
     preloadTimer = null;
   }
+  if (radialMenuWindow && !radialMenuWindow.isDestroyed()) {
+    radialMenuWindow.destroy();
+    radialMenuWindow = null;
+  }
   if (preloadedDialogWindow && !preloadedDialogWindow.isDestroyed()) {
     preloadedDialogWindow.destroy();
     preloadedDialogWindow = null;
+  }
+  if (dialogWindow && !dialogWindow.isDestroyed()) {
+    dialogWindow.destroy();
+    dialogWindow = null;
   }
   cleanupFunctions.forEach((fn) => {
     try {

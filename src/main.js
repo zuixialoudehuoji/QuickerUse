@@ -8,6 +8,13 @@ import App from './App.vue'
 import DialogApp from './DialogApp.vue'
 import './assets/main.css'
 
+// 生产环境下禁用 console.log 和 console.debug
+if (import.meta.env.PROD) {
+  const noop = () => {}
+  console.log = noop
+  console.debug = noop
+}
+
 // 屏蔽 Electron 开发环境的安全警告
 const originalWarn = console.warn;
 console.warn = (...args) => {

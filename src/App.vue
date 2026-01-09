@@ -1,14 +1,24 @@
 <template>
+  <!-- 密钥验证遮罩层（仅主窗口显示） -->
+  <LicenseModal
+    v-if="isMainWindow"
+    @license-validated="handleLicenseValidated"
+    @license-invalid="handleLicenseInvalid"
+  />
+
   <!-- 全局轮盘菜单模式 -->
   <GlobalRadialMenu
     v-if="isRadialMenuMode"
     :visible="radialMenuVisible"
     :slots="globalRadialMenuSlots"
     :menu-items="globalRadialMenuItems"
+    :quick-slots="globalQuickSlots"
     :center-x="radialMenuX"
     :center-y="radialMenuY"
     :theme="radialMenuTheme"
     :show-hints="radialMenuShowHints"
+    :radius="radialMenuRadius"
+    :layers="radialMenuLayers"
     @select="handleGlobalRadialSelect"
     @cancel="handleGlobalRadialCancel"
     @close="handleGlobalRadialClose"
@@ -175,6 +185,10 @@
         </div>
         <h2 class="about-name">QuickerUse</h2>
         <p class="about-ver">版本 0.1.0</p>
+        <p v-if="licenseValid" class="about-license">
+          授权剩余 <span class="license-days">{{ licenseRemainingDays }}</span> 天
+          <span class="license-expire">（{{ licenseExpireDate }} 到期）</span>
+        </p>
         <p class="about-desc">极简高效的鼠标优先效率工具</p>
         <div class="about-features">
           <span>智能感知</span>
@@ -215,6 +229,7 @@ import AIChatPanel from './components/AIChatPanel.vue';
 import RadialMenu from './components/RadialMenu.vue';
 import GlobalRadialMenu from './components/GlobalRadialMenu.vue';
 import SettingsModal from './components/SettingsModal.vue';
+import LicenseModal from './components/LicenseModal.vue';
 
 // 工具
 import textProcessor from './utils/textProcessor';
@@ -240,13 +255,19 @@ const settings = reactive(JSON.parse(localStorage.getItem('app-settings') || JSO
 const smartHotkeys = reactive(JSON.parse(localStorage.getItem('smart-hotkeys') || '{}'));
 const isPinned = ref(false);
 
-// 全局轮盘菜单模式状态
-const isRadialMenuMode = ref(false);
+// 全局轮盘菜单模式状态（立即判断窗口类型）
+const urlParams = new URLSearchParams(window.location.search);
+const isRadialMenuMode = ref(urlParams.get('radialMenuMode') === 'true');
+const isDialogMode = ref(urlParams.get('dialogType') !== null);
+const isMainWindow = ref(!isRadialMenuMode.value && !isDialogMode.value);
 const radialMenuVisible = ref(false);
 const radialMenuTheme = ref('dark');
 const radialMenuShowHints = ref(true);
+const radialMenuRadius = ref(120); // 轮盘半径
+const radialMenuLayers = ref(2);   // 轮盘层数
 const globalRadialMenuItems = ref([]);
 const globalRadialMenuSlots = ref([]);
+const globalQuickSlots = ref([]);  // 数字键功能配置
 
 // 弹窗状态
 const showAddTool = ref(false);
@@ -259,6 +280,11 @@ const showAIPanel = ref(false);
 const showSettingsModal = ref(false);
 const aiInitialText = ref('');
 const pendingDropFile = ref(null);  // 待处理的拖拽文件
+
+// 许可证状态
+const licenseValid = ref(false);
+const licenseRemainingDays = ref(0);
+const licenseExpireDate = ref('');
 
 // 轮盘菜单状态
 const showRadialMenu = ref(false);
@@ -786,6 +812,22 @@ const handleRadialSettingsChange = (radialSettings) => {
   window.api?.send('update-radial-menu-settings', radialSettings);
 };
 
+// 密钥验证成功
+const handleLicenseValidated = (data) => {
+  licenseValid.value = true;
+  licenseRemainingDays.value = data.remainingDays || 0;
+  licenseExpireDate.value = data.expireDate || '';
+  console.log('[App] License validated, remaining days:', data.remainingDays);
+};
+
+// 密钥验证失败
+const handleLicenseInvalid = (data) => {
+  licenseValid.value = false;
+  licenseRemainingDays.value = 0;
+  licenseExpireDate.value = '';
+  console.log('[App] License invalid:', data.message);
+};
+
 const applySettings = () => {
   document.documentElement.setAttribute('data-theme', settings.theme);
   const appEl = document.querySelector('.quicker-use-app');
@@ -931,10 +973,6 @@ const handleGlobalRadialClose = () => {
 
 // === 生命周期 ===
 onMounted(() => {
-  // 检查是否为全局轮盘菜单模式
-  const urlParams = new URLSearchParams(window.location.search);
-  isRadialMenuMode.value = urlParams.get('radialMenuMode') === 'true';
-
   if (isRadialMenuMode.value) {
     console.log('[App] Running in Radial Menu Mode');
     // 轮盘菜单模式下，监听初始化事件
@@ -946,12 +984,23 @@ onMounted(() => {
 
         // 加载设置
         if (data.settings) {
-          radialMenuTheme.value = data.settings.theme || 'dark';
+          // 轮盘主题与主窗口主题保持一致
+          radialMenuTheme.value = settings.theme === 'light' ? 'light' : 'dark';
           radialMenuShowHints.value = data.settings.showHints !== false;
+          radialMenuRadius.value = data.settings.radius || 120;
+          radialMenuLayers.value = data.settings.layers || 2;
           // 优先使用 slots 格式，兼容 menuItems 格式
           globalRadialMenuSlots.value = data.settings.slots || [];
           globalRadialMenuItems.value = data.settings.menuItems || [];
-          console.log('[App] Radial menu slots:', globalRadialMenuSlots.value.length, 'menuItems:', globalRadialMenuItems.value.length);
+          // 加载数字键功能配置
+          globalQuickSlots.value = data.settings.quickSlots || [];
+          console.log('[App] Radial menu settings:', {
+            radius: radialMenuRadius.value,
+            layers: radialMenuLayers.value,
+            theme: radialMenuTheme.value,
+            slotsCount: globalRadialMenuSlots.value.length,
+            quickSlotsCount: globalQuickSlots.value.length
+          });
         }
 
         // 显示轮盘
@@ -959,6 +1008,26 @@ onMounted(() => {
       });
     }
     return; // 轮盘模式下不执行后续主界面逻辑
+  }
+
+  // 检查首次启动的默认配置
+  if (window.api) {
+    window.api.on('first-launch-config', (data) => {
+      if (data && data.localStorageBackup) {
+        console.log('[App] First launch - restoring localStorage backup');
+        Object.entries(data.localStorageBackup).forEach(([key, value]) => {
+          try {
+            localStorage.setItem(key, typeof value === 'string' ? value : JSON.stringify(value));
+            console.log('[App] Restored localStorage:', key);
+          } catch (e) {
+            console.error('[App] Failed to restore localStorage:', key, e);
+          }
+        });
+        // 刷新页面以应用恢复的配置
+        window.location.reload();
+      }
+    });
+    window.api.send('check-first-launch-config');
   }
 
   applySettings();
@@ -1196,6 +1265,26 @@ onMounted(() => {
   font-size: 12px;
   color: var(--text-dim);
   margin: 0 0 8px 0;
+}
+
+.about-license {
+  font-size: 12px;
+  color: #67c23a;
+  margin: 0 0 8px 0;
+  padding: 4px 10px;
+  background: rgba(103, 194, 58, 0.1);
+  border-radius: 12px;
+  border: 1px solid rgba(103, 194, 58, 0.2);
+}
+
+.license-days {
+  font-weight: bold;
+  color: #67c23a;
+}
+
+.license-expire {
+  font-size: 10px;
+  opacity: 0.8;
 }
 
 .about-desc {

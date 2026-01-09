@@ -34,7 +34,11 @@
       "Bash(dir \"%APPDATA%\\\\Electron\")",
       "Bash(timeout /t 3 /nobreak)",
       "Bash(timeout /t 2 /nobreak)",
-      "Bash(\"C:\\\\Windows\\\\Microsoft.NET\\\\Framework64\\\\v4.0.30319\\\\csc.exe\" /out:MouseHook.exe /target:winexe /reference:System.Windows.Forms.dll MouseHook.cs)"
+      "Bash(\"C:\\\\Windows\\\\Microsoft.NET\\\\Framework64\\\\v4.0.30319\\\\csc.exe\" /out:MouseHook.exe /target:winexe /reference:System.Windows.Forms.dll MouseHook.cs)",
+      "Bash(npx vue-tsc:*)",
+      "Bash(npx vite build:*)",
+      "Bash(Bridge.exe validate:*)",
+      "Bash(timeout:*)"
     ]
   }
 }

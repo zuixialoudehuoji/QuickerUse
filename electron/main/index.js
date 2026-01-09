@@ -1,7 +1,7 @@
 // electron/main/index.js (主进程文件)
 import { app, BrowserWindow, globalShortcut, ipcMain, screen, clipboard, shell, Tray, Menu, nativeImage, Notification } from 'electron'
-import { join } from 'path'
-import { spawn } from 'child_process'
+import path, { join } from 'path'
+import {execFile, spawn} from 'child_process'
 import fs from 'fs'
 import systemTools from './systemTools'
 import scriptManager from './scriptManager'
@@ -9,6 +9,7 @@ import fileServer from './fileServer'
 import secretManager from './secretManager'
 import configManager from './configManager'
 import ClipboardHistory from './clipboardHistory.js'
+import licenseManager from './licenseManager.js'
 
 // 剪贴板历史管理器实例
 let clipboardHistory = null 
@@ -30,9 +31,17 @@ let radialMenuWindow = null  // 轮盘菜单窗口（全局变量，便于清理
 let preloadedDialogWindow = null  // 预加载的弹出框窗口
 let preloadTimer = null  // 预加载定时器
 let cleanupFunctions = []  // 注册的清理函数
+let windowCleanupTimer = null  // 窗口清理定时器
 
 // 开发模式判断
 const isDev = process.env.NODE_ENV === 'development'
+
+// 生产环境下禁用 console.log 和 console.debug（保留 error/warn 用于排查问题）
+if (!isDev) {
+  const noop = () => {}
+  console.log = noop
+  console.debug = noop
+}
 
 // 资源路径 - 打包后需要从 resources 目录读取
 const getResourcePath = (filename) => {
@@ -45,6 +54,176 @@ const getResourcePath = (filename) => {
 
 const mouseHookPath = getResourcePath('MouseHook.exe');
 let middleClickEnabled = true; // 中键唤醒开关
+let summonMode = 'popup'; // 召唤模式: 'popup' 弹框模式, 'radial' 轮盘模式
+
+// 解密
+const bridgePath = getResourcePath('Bridge.exe');
+
+
+ipcMain.handle('validate-license', async (event, token) => {
+  return new Promise((resolve) => {
+    execFile(bridgePath, ['validate', token], (error, stdout, stderr) => {
+      if (error) {
+        resolve({ success: false, error: error.message });
+      } else {
+        try {
+          const result = JSON.parse(stdout.trim());
+          resolve({ success: true, data: result });
+        } catch (e) {
+          resolve({ success: false, error: "Invalid response from bridge." });
+        }
+      }
+    });
+  });
+});
+
+// ========== 密钥验证 IPC（全局注册，确保在窗口创建前可用） ==========
+
+// 翻译 Bridge.exe 返回的英文消息为中文
+const translateLicenseMessage = (msg) => {
+  if (!msg) return '未知错误';
+  const translations = {
+    'Valid license.': '授权有效',
+    'Invalid license format.': '授权格式无效',
+    'Invalid license signature.': '授权签名无效',
+    'License not bound to this hardware.': '授权未绑定到此设备',
+    'Decryption failed or invalid key.': '解密失败或密钥无效',
+    'No valid network adapters found.': '未找到有效的网络适配器'
+  };
+  // 检查过期消息（包含日期）
+  if (msg.startsWith('License expired on')) {
+    const dateMatch = msg.match(/License expired on (.+)\./);
+    if (dateMatch) {
+      return `授权已于 ${dateMatch[1]} 过期`;
+    }
+    return '授权已过期';
+  }
+  // 检查错误消息前缀
+  if (msg.startsWith('Error:')) {
+    return '错误: ' + msg.substring(6).trim();
+  }
+  return translations[msg] || msg;
+};
+
+// 验证当前密钥
+ipcMain.on('license-validate', (event) => {
+  console.log('[LicenseManager] license-validate received');
+  try {
+    const licenseKey = licenseManager.readLicenseFromFile();
+    console.log('[LicenseManager] License key length:', licenseKey ? licenseKey.length : 0);
+
+    if (!licenseKey) {
+      console.log('[LicenseManager] No license key found');
+      event.reply('license-status', {
+        isValid: false,
+        remainingDays: 0,
+        message: '未找到授权密钥，请输入有效密钥'
+      });
+      return;
+    }
+
+    // 调用 Bridge.exe 验证
+    console.log('[LicenseManager] Calling Bridge.exe...');
+    execFile(bridgePath, ['validate', licenseKey], { timeout: 10000, windowsHide: true }, (error, stdout) => {
+      if (error) {
+        console.error('[LicenseManager] Bridge.exe error:', error.message);
+        event.reply('license-status', {
+          isValid: false,
+          remainingDays: 0,
+          message: '验证失败: ' + error.message
+        });
+        return;
+      }
+
+      try {
+        console.log('[LicenseManager] Bridge.exe output:', stdout);
+        const data = JSON.parse(stdout.trim());
+        if (data.valid) {
+          const expiryDate = new Date(data.expiry);
+          const remainingDays = Math.max(0, Math.ceil((expiryDate - new Date()) / (1000 * 60 * 60 * 24)));
+          console.log('[LicenseManager] License valid, days remaining:', remainingDays);
+          event.reply('license-status', {
+            isValid: true,
+            remainingDays,
+            expireDate: data.expiry.split(' ')[0],
+            message: '授权有效'
+          });
+        } else {
+          console.log('[LicenseManager] License invalid:', data.message);
+          event.reply('license-status', {
+            isValid: false,
+            remainingDays: 0,
+            message: translateLicenseMessage(data.message)
+          });
+        }
+      } catch (e) {
+        console.error('[LicenseManager] Parse error:', e.message);
+        event.reply('license-status', {
+          isValid: false,
+          remainingDays: 0,
+          message: '解析失败'
+        });
+      }
+    });
+  } catch (e) {
+    console.error('[LicenseManager] Exception:', e.message);
+    event.reply('license-status', {
+      isValid: false,
+      remainingDays: 0,
+      message: '验证异常: ' + e.message
+    });
+  }
+});
+
+// 激活新密钥
+ipcMain.on('license-activate', (event, licenseKey) => {
+  console.log('[LicenseManager] license-activate received');
+  if (!licenseKey || !licenseKey.trim()) {
+    event.reply('license-activate-result', { success: false, message: '密钥不能为空' });
+    return;
+  }
+
+  execFile(bridgePath, ['validate', licenseKey.trim()], { timeout: 10000, windowsHide: true }, (error, stdout) => {
+    if (error) {
+      event.reply('license-activate-result', { success: false, message: '验证失败: ' + error.message });
+      return;
+    }
+
+    try {
+      const data = JSON.parse(stdout.trim());
+      if (data.valid) {
+        // 保存密钥
+        const saved = licenseManager.saveLicenseToFile(licenseKey.trim());
+
+        if (saved) {
+          const expiryDate = new Date(data.expiry);
+          const remainingDays = Math.max(0, Math.ceil((expiryDate - new Date()) / (1000 * 60 * 60 * 24)));
+          const result = {
+            success: true,
+            isValid: true,
+            remainingDays,
+            expireDate: data.expiry.split(' ')[0],
+            message: '激活成功！剩余 ' + remainingDays + ' 天'
+          };
+          event.reply('license-activate-result', result);
+          event.reply('license-status', result);
+        } else {
+          event.reply('license-activate-result', { success: false, message: '密钥保存失败' });
+        }
+      } else {
+        event.reply('license-activate-result', { success: false, message: translateLicenseMessage(data.message) });
+      }
+    } catch (e) {
+      event.reply('license-activate-result', { success: false, message: '解析失败' });
+    }
+  });
+});
+
+// 获取密钥状态（使用缓存，同步）
+ipcMain.on('license-get-status', (event) => {
+  const result = licenseManager.getLicenseStatus();
+  event.reply('license-status', result);
+});
 
 function updateTrayIcon() {
   if (tray && normalIconImage && disabledIconImage) {
@@ -85,6 +264,10 @@ const ACTION_TO_DIALOG = {
 const SPECIAL_ACTIONS = {
   'pick-color': 'color-picker',      // 取色器
   'lock-screen': 'system-action',    // 锁屏
+  'open-explorer': 'system-action',  // 打开我的电脑
+  'minimize-all': 'system-action',   // 最小化全部
+  'switch-hosts': 'system-action',   // Hosts目录
+  'open-regedit': 'system-action',   // 打开注册表
   'search-google': 'web-search',     // 搜索
   'translate': 'web-translate',      // 翻译
 };
@@ -275,8 +458,15 @@ function registerGlobalShortcut(shortcut) {
     }
 
     const ret = globalShortcut.register(shortcut, () => {
-      // 直接调用，不使用延迟，实现秒级启动
-      activateApp(null, true);
+      // 根据召唤模式决定显示主窗口还是轮盘
+      if (summonMode === 'radial' && globalCreateRadialMenuWindow) {
+        const cursorPoint = screen.getCursorScreenPoint();
+        console.log('[Hotkey] Opening radial menu at:', cursorPoint.x, cursorPoint.y);
+        globalCreateRadialMenuWindow(cursorPoint.x, cursorPoint.y);
+      } else {
+        // 弹框模式 - 直接调用，不使用延迟，实现秒级启动
+        activateApp(null, true);
+      }
     });
 
     // 重新注册智能热键
@@ -296,6 +486,19 @@ function registerGlobalShortcut(shortcut) {
 
 let cachedSmartHotkeys = {};
 let cachedCustomHotkeys = {};
+let hotkeyRegistrationTimer = null;  // 防抖定时器
+
+// 防抖注册所有快捷键（避免频繁重复注册）
+function debouncedRegisterHotkeys() {
+  if (hotkeyRegistrationTimer) {
+    clearTimeout(hotkeyRegistrationTimer);
+  }
+  hotkeyRegistrationTimer = setTimeout(() => {
+    hotkeyRegistrationTimer = null;
+    console.log('[Hotkey] Debounced registration triggered');
+    registerGlobalShortcut(globalHotkey);
+  }, 100);  // 100ms 防抖
+}
 
 function registerSmartHotkeys() {
   const validModifiers = ['Alt', 'Ctrl', 'Control', 'Shift', 'Command', 'Cmd', 'Super', 'Meta'];
@@ -457,7 +660,8 @@ async function createWindow() {
   ipcMain.on('update-global-hotkey', (event, newHotkey) => {
     if (newHotkey && typeof newHotkey === 'string') {
       globalHotkey = newHotkey;
-      registerGlobalShortcut(globalHotkey);
+      // 使用防抖注册，避免频繁重复注册
+      debouncedRegisterHotkeys();
     } else {
       console.warn('Received invalid global hotkey:', newHotkey);
     }
@@ -467,49 +671,88 @@ async function createWindow() {
     cachedSmartHotkeys = hotkeys;
     // 保存到配置文件，下次启动时可恢复
     configManager.set('smartHotkeys', hotkeys);
-    registerGlobalShortcut(globalHotkey);
+    // 使用防抖注册，避免频繁重复注册
+    debouncedRegisterHotkeys();
   });
 
   ipcMain.on('update-custom-hotkeys', (event, hotkeys) => {
     cachedCustomHotkeys = hotkeys;
     // 保存到配置文件
     configManager.set('customHotkeys', hotkeys);
-    registerGlobalShortcut(globalHotkey);
+    // 使用防抖注册，避免频繁重复注册
+    debouncedRegisterHotkeys();
   });
 
   // === 全局轮盘菜单 ===
 
-  // 默认轮盘菜单设置
+  // 默认轮盘菜单设置 - 使用 slots 二维数组格式
   const defaultRadialMenuSettings = {
-    enabled: true,
-    triggerMode: 'rightLongPress',
-    longPressDelay: 400,
-    theme: 'dark',
+    radius: 120,    // 轮盘半径 (80-200px)
+    layers: 2,      // 显示层数 (1-3)
     showHints: true,
-    menuItems: [
-      { id: '1', label: 'JSON', icon: '📋', action: 'json-format' },
-      { id: '2', label: '时间戳', icon: '⏰', action: 'timestamp-convert' },
-      { id: '3', label: '计算器', icon: '🔢', action: 'calculator' },
-      { id: '4', label: '编码', icon: '🔤', action: 'encoder' },
-      { id: '5', label: '颜色', icon: '🎨', action: 'color-convert' },
-      { id: '6', label: 'AI', icon: '🤖', action: 'ai-assistant' },
-      { id: '7', label: '剪贴板', icon: '📎', action: 'clipboard-history' },
-      { id: '8', label: '取色', icon: '🎯', action: 'pick-color' }
-    ]
+    customActions: [], // 自定义功能列表
+    // slots[sector][layer] 格式: 8个扇区 x 3层
+    slots: [
+      // 扇区0: JSON相关
+      [{ icon: '📋', label: 'JSON', action: 'json-format' }, { icon: '🔍', label: '提取', action: 'extract-info' }, null],
+      // 扇区1: 时间相关
+      [{ icon: '⏰', label: '时间戳', action: 'timestamp-convert' }, { icon: '🔢', label: '计算器', action: 'calculator' }, null],
+      // 扇区2: AI相关
+      [{ icon: '🤖', label: 'AI', action: 'ai-assistant' }, { icon: '📎', label: '剪贴板', action: 'clipboard-history' }, null],
+      // 扇区3: 颜色相关
+      [{ icon: '🎨', label: '颜色', action: 'color-convert' }, { icon: '🎯', label: '取色', action: 'pick-color' }, null],
+      // 扇区4: 二维码
+      [{ icon: '📱', label: '二维码', action: 'generate-qr' }, { icon: '👁️', label: 'OCR', action: 'ocr' }, null],
+      // 扇区5: 生成器
+      [{ icon: '🔑', label: 'UUID', action: 'generate-uuid' }, { icon: '🔐', label: '密码', action: 'generate-password' }, null],
+      // 扇区6: 搜索翻译
+      [{ icon: '🌐', label: '搜索', action: 'search-google' }, { icon: '🌍', label: '翻译', action: 'translate' }, null],
+      // 扇区7: 其他
+      [{ icon: '⏳', label: '倒计时', action: 'timer' }, { icon: '💡', label: '闪念', action: 'memo' }, null]
+    ],
+    // 数字键快捷功能配置 (1-8)
+    quickSlots: [
+      { icon: '🔒', label: '锁屏', action: 'lock-screen' },
+      { icon: '💻', label: '我的电脑', action: 'open-explorer' },
+      { icon: '📥', label: '显示桌面', action: 'minimize-all' },
+      { icon: '📁', label: 'Hosts', action: 'switch-hosts' },
+      { icon: '🎯', label: '取色', action: 'pick-color' },
+      { icon: '📋', label: '注册表', action: 'open-regedit' },
+      { icon: '⏳', label: '倒计时', action: 'timer' },
+      { icon: '💡', label: '闪念', action: 'memo' }
+    ],
+    menuItems: []
   };
 
   let radialMenuSettings = configManager.get('radialMenuSettings') || defaultRadialMenuSettings;
+  // 确保关键属性存在（兼容旧配置）
+  if (!radialMenuSettings.slots) {
+    radialMenuSettings.slots = defaultRadialMenuSettings.slots;
+  }
+  if (!radialMenuSettings.radius) {
+    radialMenuSettings.radius = defaultRadialMenuSettings.radius;
+  }
+  if (!radialMenuSettings.layers) {
+    radialMenuSettings.layers = defaultRadialMenuSettings.layers;
+  }
+  // 确保 quickSlots 存在
+  if (!radialMenuSettings.quickSlots || radialMenuSettings.quickSlots.length !== 8) {
+    radialMenuSettings.quickSlots = defaultRadialMenuSettings.quickSlots;
+  }
   console.log('[Main] Radial menu settings loaded:', {
-    enabled: radialMenuSettings.enabled,
-    triggerMode: radialMenuSettings.triggerMode,
-    menuItemsCount: radialMenuSettings.menuItems?.length || 0
+    radius: radialMenuSettings.radius,
+    layers: radialMenuSettings.layers,
+    slotsCount: radialMenuSettings.slots?.length || 0,
+    menuItemsCount: radialMenuSettings.menuItems?.length || 0,
+    quickSlotsCount: radialMenuSettings.quickSlots?.length || 0
   });
 
   // 预捕获的选中内容（在显示轮盘前捕获）
   let radialMenuPreCapturedText = '';
 
-  // 创建全局轮盘菜单窗口（异步版本，先捕获选中内容）
+  // 创建全局轮盘菜单窗口
   async function createRadialMenuWindow(x, y) {
+    // 如果有已显示的轮盘窗口，先销毁
     if (radialMenuWindow && !radialMenuWindow.isDestroyed()) {
       radialMenuWindow.destroy();
       radialMenuWindow = null;
@@ -521,6 +764,16 @@ async function createWindow() {
 
     const primaryDisplay = screen.getPrimaryDisplay();
     const { width, height } = primaryDisplay.workAreaSize;
+
+    // 边界检测 - 确保轮盘不超出屏幕
+    const radius = radialMenuSettings.radius || 120;
+    const padding = radius + 30;
+    let adjustedX = x;
+    let adjustedY = y;
+    if (adjustedX < padding) adjustedX = padding;
+    if (adjustedX > width - padding) adjustedX = width - padding;
+    if (adjustedY < padding) adjustedY = padding;
+    if (adjustedY > height - padding) adjustedY = height - padding;
 
     radialMenuWindow = new BrowserWindow({
       width: width,
@@ -551,21 +804,32 @@ async function createWindow() {
       });
     }
 
+    // 转发轮盘窗口控制台消息到终端（调试用）
+    radialMenuWindow.webContents.on('console-message', (event, level, message) => {
+      if (message.includes('[GlobalRadialMenu]') || message.includes('[RadialMenu]')) {
+        console.log('[RadialMenuWindow Console]', message);
+      }
+    });
+
+    radialMenuWindow.webContents.on('context-menu', (e) => {
+      e.preventDefault();
+    });
+
     radialMenuWindow.webContents.once('dom-ready', () => {
       if (radialMenuWindow && !radialMenuWindow.isDestroyed()) {
-        // 发送初始化数据
         radialMenuWindow.webContents.send('radial-menu-init', {
-          centerX: x,
-          centerY: y,
+          centerX: adjustedX,
+          centerY: adjustedY,
           settings: radialMenuSettings
         });
         radialMenuWindow.show();
         radialMenuWindow.focus();
+        radialMenuWindow.webContents.focus();
+        console.log('[Main] Radial menu shown at:', adjustedX, adjustedY);
       }
     });
 
     radialMenuWindow.on('blur', () => {
-      // 失去焦点时关闭（使用 destroy 确保立即销毁）
       if (radialMenuWindow && !radialMenuWindow.isDestroyed()) {
         radialMenuWindow.destroy();
       }
@@ -574,8 +838,6 @@ async function createWindow() {
     radialMenuWindow.on('closed', () => {
       radialMenuWindow = null;
     });
-
-    console.log('[Main] Radial menu window created at:', x, y);
   }
 
   // 将 createRadialMenuWindow 存储到全局变量，供 MouseHook 调用
@@ -597,9 +859,22 @@ async function createWindow() {
     }
   });
 
-  // 轮盘菜单选择动作
+  // 轮盘菜单选择动作 - 添加防重复执行机制
+  let lastRadialAction = { action: null, time: 0 };
+
   ipcMain.on('radial-menu-action', async (event, { action, data }) => {
-    console.log('[Main] Radial menu action:', action, data);
+    console.log('[Main] ====== RADIAL MENU ACTION RECEIVED ======');
+    console.log('[Main] Action:', action);
+
+    // 防重复执行：500ms 内相同动作只执行一次
+    const now = Date.now();
+    if (action === lastRadialAction.action && now - lastRadialAction.time < 500) {
+      console.log('[Main] Duplicate action ignored:', action);
+      return;
+    }
+    lastRadialAction = { action, time: now };
+
+    console.log('[Main] Data:', JSON.stringify(data));
 
     // 关闭轮盘菜单（使用 destroy 确保立即关闭）
     if (radialMenuWindow && !radialMenuWindow.isDestroyed()) {
@@ -609,10 +884,29 @@ async function createWindow() {
 
     // 执行动作
     if (action) {
+      // 检查是否为用户自定义文件工具 (格式: file:path)
+      if (action.startsWith('file:')) {
+        const filePath = action.substring(5); // 去掉 'file:' 前缀
+        console.log('[Main] Opening user file:', filePath);
+        shell.openPath(filePath).catch(err => {
+          console.error('[Main] Failed to open file:', err);
+        });
+        return;
+      }
+
+      // 检查是否为内置工具 (格式: builtin:action)
+      if (action.startsWith('builtin:')) {
+        const builtinAction = action.substring(8); // 去掉 'builtin:' 前缀
+        console.log('[Main] Executing builtin action:', builtinAction);
+        // 递归调用自身处理内置动作
+        ipcMain.emit('radial-menu-action', event, { action: builtinAction, data });
+        return;
+      }
+
       // 检查是否为特殊动作
       const specialType = SPECIAL_ACTIONS[action];
       if (specialType) {
-        console.log('[Main] Handling special action:', action, specialType);
+        console.log('[Main] Special action detected:', action, '->', specialType);
 
         if (specialType === 'color-picker') {
           // 取色器 - 通过 IPC 触发
@@ -626,8 +920,37 @@ async function createWindow() {
             ipcMain.emit('pick-color', event);
           }, 100);
         } else if (specialType === 'system-action') {
-          // 系统动作 - 锁屏
-          systemTools.lockScreen();
+          // 系统动作 - 根据具体 action 执行不同操作
+          // 添加延迟确保轮盘窗口完全关闭后再执行
+          console.log('[Main] Executing system action:', action);
+          setTimeout(() => {
+            const { exec: execCmd } = require('child_process');
+            switch (action) {
+              case 'lock-screen':
+                console.log('[Main] Calling systemTools.lockScreen()');
+                systemTools.lockScreen();
+                break;
+              case 'open-explorer':
+                console.log('[Main] Opening explorer');
+                shell.openPath('C:\\');
+                break;
+              case 'minimize-all':
+                console.log('[Main] Calling minimize-all via shell');
+                // 使用更可靠的方式显示桌面
+                execCmd('powershell -NoProfile -Command "(New-Object -ComObject Shell.Application).ToggleDesktop()"');
+                break;
+              case 'switch-hosts':
+                console.log('[Main] Opening hosts folder');
+                shell.openPath('C:\\Windows\\System32\\drivers\\etc');
+                break;
+              case 'open-regedit':
+                console.log('[Main] Opening regedit');
+                execCmd('regedit');
+                break;
+              default:
+                console.warn('[Main] Unknown system action:', action);
+            }
+          }, 150); // 延迟确保轮盘窗口完全关闭
         } else if (specialType === 'web-search') {
           // 网页搜索
           const text = radialMenuPreCapturedText || '';
@@ -650,22 +973,43 @@ async function createWindow() {
         return;
       }
 
-      // 使用预捕获的内容直接打开弹出框
+      // 检查是否为自定义功能 (格式: custom:type:path)
+      if (action.startsWith('custom:')) {
+        const parts = action.split(':');
+        const customType = parts[1];
+        const customPath = parts.slice(2).join(':'); // 路径可能包含冒号
+        console.log('[Main] Custom action:', customType, customPath);
+
+        if (customType === 'path') {
+          // 打开路径或URL
+          shell.openExternal(customPath).catch(err => {
+            console.error('[Main] Failed to open path:', err);
+          });
+        } else if (customType === 'script') {
+          // 运行脚本
+          if (scriptManager && scriptManager.runScript) {
+            scriptManager.runScript(customPath);
+          }
+        }
+        return;
+      }
+
+      // 使用预捕获的内容，通过主窗口打开弹出框（保持弹窗逻辑一致）
       const config = ACTION_TO_DIALOG[action];
-      if (config && global.createDialogWindow) {
-        const dialogData = {
-          title: config.title,
-          type: config.type,
-          actionType: config.actionType,
-          initialText: radialMenuPreCapturedText,
-          text: radialMenuPreCapturedText,
-          width: config.width,
-          height: config.height
-        };
-        global.createDialogWindow(dialogData);
-        console.log('[Main] Dialog opened with pre-captured text, length:', radialMenuPreCapturedText.length);
+      if (config) {
+        // 确保主窗口存在
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          // 发送到主窗口，让主窗口的 handleAction 处理，保持弹窗一致
+          mainWindow.webContents.send('trigger-smart-action', {
+            action: action,
+            text: radialMenuPreCapturedText
+          });
+          console.log('[Main] Sent action to mainWindow for consistent dialog, action:', action);
+        } else {
+          console.warn('[Main] Main window not available for action:', action);
+        }
       } else {
-        console.warn('[Main] Unknown action or createDialogWindow not available:', action);
+        console.warn('[Main] Unknown action:', action);
       }
     }
   });
@@ -850,7 +1194,66 @@ async function createWindow() {
       event.reply('config-data', configManager.getAll());
     }
   });
-  
+
+  // 配置导出/导入功能
+  ipcMain.on('export-config', async (event) => {
+    const { dialog } = require('electron');
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: '导出配置文件',
+      defaultPath: `quickeruse-config-${Date.now()}.json`,
+      filters: [{ name: 'JSON 文件', extensions: ['json'] }]
+    });
+
+    if (!result.canceled && result.filePath) {
+      // 收集所有配置数据（包括 localStorage 中的数据）
+      const exportResult = configManager.exportFullConfig(result.filePath);
+      event.reply('export-config-result', exportResult);
+    } else {
+      event.reply('export-config-result', { success: false, canceled: true });
+    }
+  });
+
+  ipcMain.on('import-config', async (event) => {
+    const { dialog } = require('electron');
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: '导入配置文件',
+      filters: [{ name: 'JSON 文件', extensions: ['json'] }],
+      properties: ['openFile']
+    });
+
+    if (!result.canceled && result.filePaths.length > 0) {
+      const importResult = configManager.importConfig(result.filePaths[0]);
+      // 导入成功后，检查是否有 localStorage 备份需要恢复
+      if (importResult.success) {
+        const localStorageBackup = configManager.get('localStorageBackup');
+        if (localStorageBackup) {
+          importResult.localStorageBackup = localStorageBackup;
+        }
+      }
+      event.reply('import-config-result', importResult);
+    } else {
+      event.reply('import-config-result', { success: false, canceled: true });
+    }
+  });
+
+  // 获取配置文件路径
+  ipcMain.on('get-config-path', (event) => {
+    event.reply('config-path', configManager.getConfigPath());
+  });
+
+  // 检查首次启动的默认配置恢复
+  ipcMain.on('check-first-launch-config', (event) => {
+    const localStorageBackup = configManager.get('localStorageBackup');
+    const isFirstLaunch = configManager.get('_firstLaunchHandled') !== true;
+    if (isFirstLaunch && localStorageBackup) {
+      // 标记已处理过首次启动
+      configManager.set('_firstLaunchHandled', true);
+      event.reply('first-launch-config', { localStorageBackup });
+    } else {
+      event.reply('first-launch-config', null);
+    }
+  });
+
   ipcMain.on('open-image-window', (event, base64Data) => {
     // 创建图片置顶窗口
     let imgWin = new BrowserWindow({
@@ -2549,23 +2952,18 @@ function startMouseHook() {
     mouseHookProc.stdout.on('data', (data) => {
       const msg = data.toString().trim();
 
-      // 中键点击 - 唤醒主窗口
+      // 中键点击 - 根据召唤模式决定打开轮盘或主窗口
       if (msg.includes('MIDDLE_CLICK') && middleClickEnabled) {
-        console.log('[Main] Middle Click Detected');
-        activateApp();
-      }
+        console.log('[Main] Middle Click Detected, summonMode:', summonMode);
 
-      // 右键长按 - 打开轮盘菜单
-      if (msg.startsWith('RIGHT_LONG_PRESS')) {
-        const parts = msg.split(' ');
-        const x = parseInt(parts[1]) || 0;
-        const y = parseInt(parts[2]) || 0;
-        console.log('[Main] Right Long Press Detected at:', x, y);
-
-        // 检查轮盘菜单是否启用且触发模式为右键长按
-        const settings = configManager.get('radialMenuSettings') || {};
-        if (settings.enabled && settings.triggerMode === 'rightLongPress' && globalCreateRadialMenuWindow) {
-          globalCreateRadialMenuWindow(x, y);
+        if (summonMode === 'radial' && globalCreateRadialMenuWindow) {
+          // 轮盘模式 - 获取当前鼠标位置并打开轮盘
+          const cursorPoint = screen.getCursorScreenPoint();
+          console.log('[Main] Opening radial menu at:', cursorPoint.x, cursorPoint.y);
+          globalCreateRadialMenuWindow(cursorPoint.x, cursorPoint.y);
+        } else {
+          // 弹框模式 - 唤醒主窗口
+          activateApp();
         }
       }
     });
@@ -2703,6 +3101,32 @@ if (!gotTheLock) {
             },
             { type: 'separator' },
             {
+              label: '召唤模式',
+              submenu: [
+                {
+                  label: '弹框模式',
+                  type: 'radio',
+                  checked: summonMode === 'popup',
+                  click: () => {
+                    summonMode = 'popup';
+                    configManager.set('summonMode', 'popup');
+                    tray.setContextMenu(buildTrayMenu());
+                  }
+                },
+                {
+                  label: '轮盘模式',
+                  type: 'radio',
+                  checked: summonMode === 'radial',
+                  click: () => {
+                    summonMode = 'radial';
+                    configManager.set('summonMode', 'radial');
+                    tray.setContextMenu(buildTrayMenu());
+                  }
+                }
+              ]
+            },
+            { type: 'separator' },
+            {
               label: isAppDisabled ? '启用' : '禁用',
               click: () => {
                 isAppDisabled = !isAppDisabled;
@@ -2751,6 +3175,11 @@ if (!gotTheLock) {
         });
 
         console.log('[Main] Tray created successfully');
+
+        // 从配置文件加载召唤模式并更新托盘菜单
+        summonMode = configManager.get('summonMode') || 'popup';
+        console.log('[Main] Loaded summonMode:', summonMode);
+        tray.setContextMenu(buildTrayMenu());
     } catch (err) {
         console.error('[Main] FAILED to create Tray:', err);
     }
@@ -2770,6 +3199,36 @@ if (!gotTheLock) {
       console.log('[Main] MouseHook skipped:', process.platform !== 'win32' ? 'non-Windows platform' : 'disabled by user');
     }
 
+    // 窗口监控和清理 - 每30秒检查一次残留窗口
+    windowCleanupTimer = setInterval(() => {
+      const allWindows = BrowserWindow.getAllWindows();
+      const validWindows = allWindows.filter(w => !w.isDestroyed());
+
+      // 正常情况：主窗口 + 预加载弹窗 + 可能的活动窗口（最多5-6个）
+      if (validWindows.length > 6) {
+        console.warn('[Main] Too many windows detected:', validWindows.length);
+        // 清理非主窗口、非预加载窗口的隐藏窗口
+        validWindows.forEach(w => {
+          if (w !== mainWindow &&
+              w !== preloadedDialogWindow &&
+              !w.isVisible() &&
+              !w.isDestroyed()) {
+            console.log('[Main] Destroying hidden window');
+            w.destroy();
+          }
+        });
+      }
+
+      // 检查轮盘窗口是否残留
+      if (radialMenuWindow &&
+          !radialMenuWindow.isDestroyed() &&
+          !radialMenuWindow.isVisible()) {
+        console.log('[Main] Cleaning up invisible radial menu window');
+        radialMenuWindow.destroy();
+        radialMenuWindow = null;
+      }
+    }, 30000);
+
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {
         createWindow()
@@ -2788,16 +3247,40 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   console.log('[Main] before-quit: cleaning up all resources');
 
+  // 清理窗口监控定时器
+  if (windowCleanupTimer) {
+    clearInterval(windowCleanupTimer);
+    windowCleanupTimer = null;
+  }
+
+  // 清理快捷键防抖定时器
+  if (hotkeyRegistrationTimer) {
+    clearTimeout(hotkeyRegistrationTimer);
+    hotkeyRegistrationTimer = null;
+  }
+
   // 清理预加载定时器
   if (preloadTimer) {
     clearTimeout(preloadTimer);
     preloadTimer = null;
   }
 
+  // 清理轮盘窗口
+  if (radialMenuWindow && !radialMenuWindow.isDestroyed()) {
+    radialMenuWindow.destroy();
+    radialMenuWindow = null;
+  }
+
   // 清理预加载窗口
   if (preloadedDialogWindow && !preloadedDialogWindow.isDestroyed()) {
     preloadedDialogWindow.destroy();
     preloadedDialogWindow = null;
+  }
+
+  // 清理弹窗
+  if (dialogWindow && !dialogWindow.isDestroyed()) {
+    dialogWindow.destroy();
+    dialogWindow = null;
   }
 
   // 调用所有注册的清理函数

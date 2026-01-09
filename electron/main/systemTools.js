@@ -199,9 +199,29 @@ export default {
   },
 
   /**
+   * 打开 Hosts 文件所在目录
+   */
+  openHostsFolder() {
+    const hostsPath = this.getHostsPath();
+    const hostsDir = path.dirname(hostsPath);
+    if (process.platform === 'win32') {
+      exec(`explorer "${hostsDir}"`);
+    } else if (process.platform === 'darwin') {
+      exec(`open "${hostsDir}"`);
+    } else {
+      exec(`xdg-open "${hostsDir}"`);
+    }
+    return { success: true, message: '已打开 Hosts 目录' };
+  },
+
+  /**
    * 切换 Hosts (需要管理员权限)
    */
   switchHosts(content) {
+    // 如果没有传入内容，默认打开 hosts 目录
+    if (!content || content === '127.0.0.1 quicker.local') {
+      return this.openHostsFolder();
+    }
     const hostsPath = this.getHostsPath();
     try {
       fs.copyFileSync(hostsPath, `${hostsPath}.bak`);

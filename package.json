@@ -4,7 +4,7 @@
   "private": true,
   "main": "dist-electron/main/index.js",
   "description": "A minimalist, mouse-first efficiency tool for Windows & Mac.",
-  "author": "QuickerUse Team",
+  "author": "zuixianloudehuoji",
   "scripts": {
     "dev": "chcp 65001 && vite",
     "build": "vite build && electron-builder",

@@ -15,7 +15,7 @@
       <div class="center-hint" v-else>取消</div>
     </div>
 
-    <!-- 轮盘 SVG - 三层同心环 -->
+    <!-- SVG 轮盘 SVG - 三层同心环 -->
     <svg
       class="radial-svg"
       :style="svgStyle"
@@ -69,40 +69,6 @@
             @mouseenter="setActive(sector - 1, 2)"
             @mouseleave="clearActive"
           />
-
-          <!-- 各层图标 -->
-          <text
-            v-if="getSlotData(sector - 1, 0)"
-            :x="getSlotCenter(sector - 1, 0).x"
-            :y="getSlotCenter(sector - 1, 0).y"
-            text-anchor="middle"
-            dominant-baseline="central"
-            :fill="isActive(sector - 1, 0) ? '#fff' : themeColors.iconNormal"
-            font-size="20"
-            class="sector-icon"
-          >{{ getSlotData(sector - 1, 0)?.icon }}</text>
-
-          <text
-            v-if="getSlotData(sector - 1, 1)"
-            :x="getSlotCenter(sector - 1, 1).x"
-            :y="getSlotCenter(sector - 1, 1).y"
-            text-anchor="middle"
-            dominant-baseline="central"
-            :fill="isActive(sector - 1, 1) ? '#fff' : themeColors.iconNormal"
-            font-size="16"
-            class="sector-icon"
-          >{{ getSlotData(sector - 1, 1)?.icon }}</text>
-
-          <text
-            v-if="getSlotData(sector - 1, 2)"
-            :x="getSlotCenter(sector - 1, 2).x"
-            :y="getSlotCenter(sector - 1, 2).y"
-            text-anchor="middle"
-            dominant-baseline="central"
-            :fill="isActive(sector - 1, 2) ? '#fff' : themeColors.iconNormal"
-            font-size="12"
-            class="sector-icon"
-          >{{ getSlotData(sector - 1, 2)?.icon }}</text>
         </g>
 
         <!-- 中心圆 -->
@@ -128,44 +94,147 @@
       </g>
     </svg>
 
-    <!-- 快捷键提示 -->
-    <div class="shortcut-hints" v-if="showHints">
-      <span v-for="n in sectorCount" :key="n">
-        <kbd>{{ n }}</kbd> {{ getSlotData(n - 1, 0)?.label || '-' }}
-      </span>
+    <!-- 图标层 - 使用 Element Plus 图标 -->
+    <div class="icon-layer" :style="iconLayerStyle">
+      <template v-for="sector in sectorCount" :key="'icon-'+sector">
+        <!-- 外层图标 -->
+        <div
+          v-if="getSlotData(sector - 1, 0)"
+          class="slot-icon-wrapper"
+          :style="getIconStyle(sector - 1, 0)"
+        >
+          <img v-if="getSlotImgIcon(sector - 1, 0)" :src="getSlotImgIcon(sector - 1, 0)" class="slot-img-icon" />
+          <el-icon
+            v-else-if="getSlotElIcon(sector - 1, 0)"
+            :size="20"
+            :color="isActive(sector - 1, 0) ? '#fff' : themeColors.iconNormal"
+          >
+            <component :is="getSlotElIcon(sector - 1, 0)" />
+          </el-icon>
+          <span v-else class="fallback-icon" :style="{ color: isActive(sector - 1, 0) ? '#fff' : themeColors.iconNormal }">
+            {{ getSlotData(sector - 1, 0)?.icon }}
+          </span>
+        </div>
+        <!-- 中层图标 -->
+        <div
+          v-if="getSlotData(sector - 1, 1)"
+          class="slot-icon-wrapper"
+          :style="getIconStyle(sector - 1, 1)"
+        >
+          <img v-if="getSlotImgIcon(sector - 1, 1)" :src="getSlotImgIcon(sector - 1, 1)" class="slot-img-icon" style="width: 16px; height: 16px;" />
+          <el-icon
+            v-else-if="getSlotElIcon(sector - 1, 1)"
+            :size="16"
+            :color="isActive(sector - 1, 1) ? '#fff' : themeColors.iconNormal"
+          >
+            <component :is="getSlotElIcon(sector - 1, 1)" />
+          </el-icon>
+          <span v-else class="fallback-icon" :style="{ color: isActive(sector - 1, 1) ? '#fff' : themeColors.iconNormal, fontSize: '14px' }">
+            {{ getSlotData(sector - 1, 1)?.icon }}
+          </span>
+        </div>
+        <!-- 内层图标 -->
+        <div
+          v-if="getSlotData(sector - 1, 2)"
+          class="slot-icon-wrapper"
+          :style="getIconStyle(sector - 1, 2)"
+        >
+          <img v-if="getSlotImgIcon(sector - 1, 2)" :src="getSlotImgIcon(sector - 1, 2)" class="slot-img-icon" style="width: 12px; height: 12px;" />
+          <el-icon
+            v-else-if="getSlotElIcon(sector - 1, 2)"
+            :size="12"
+            :color="isActive(sector - 1, 2) ? '#fff' : themeColors.iconNormal"
+          >
+            <component :is="getSlotElIcon(sector - 1, 2)" />
+          </el-icon>
+          <span v-else class="fallback-icon" :style="{ color: isActive(sector - 1, 2) ? '#fff' : themeColors.iconNormal, fontSize: '10px' }">
+            {{ getSlotData(sector - 1, 2)?.icon }}
+          </span>
+        </div>
+      </template>
+    </div>
+
+    <!-- 数字快捷按钮 - 可点击，只显示非空的 -->
+    <div class="quick-buttons" @mouseup.stop @mousedown.stop>
+      <template v-for="(action, idx) in systemActions" :key="idx">
+        <div
+          v-if="action && action.action"
+          class="quick-btn"
+          @mousedown.stop.prevent="triggerQuickAction(idx)"
+        >
+          <kbd>{{ idx + 1 }}</kbd>
+          <el-icon v-if="getQuickActionElIcon(action)" class="btn-el-icon">
+            <component :is="getQuickActionElIcon(action)" />
+          </el-icon>
+          <span v-else class="btn-icon">{{ action.icon }}</span>
+          <span class="btn-label">{{ action.label }}</span>
+        </div>
+      </template>
     </div>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import * as ElementPlusIcons from '@element-plus/icons-vue'
+import { FEATURE_ICONS } from '../utils/constants'
+
+// 默认数字键功能（当没有配置时使用）
+const defaultQuickSlots = [
+  { icon: '🔒', label: '锁屏', action: 'lock-screen' },
+  { icon: '💻', label: '我的电脑', action: 'open-explorer' },
+  { icon: '📥', label: '显示桌面', action: 'minimize-all' },
+  { icon: '📁', label: 'Hosts', action: 'switch-hosts' },
+  { icon: '🎯', label: '取色', action: 'pick-color' },
+  { icon: '📋', label: '注册表', action: 'open-regedit' },
+  { icon: '⏳', label: '倒计时', action: 'timer' },
+  { icon: '💡', label: '闪念', action: 'memo' }
+]
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
   slots: { type: Array, default: () => [] },       // slots[sector][layer] 结构
   menuItems: { type: Array, default: () => [] },   // 兼容旧格式
+  quickSlots: { type: Array, default: () => [] },  // 数字键功能配置
   centerX: { type: Number, default: 0 },
   centerY: { type: Number, default: 0 },
   theme: { type: String, default: 'dark' },
-  showHints: { type: Boolean, default: false }
+  showHints: { type: Boolean, default: false },
+  radius: { type: Number, default: 120 },          // 轮盘半径 (80-189px)
+  layers: { type: Number, default: 2 }             // 显示层数 (1-3)
+})
+
+// 数字键功能列表（优先使用配置，否则使用默认值）
+const systemActions = computed(() => {
+  console.log('[GlobalRadialMenu] Computing systemActions, quickSlots:', props.quickSlots?.length, props.quickSlots)
+  if (props.quickSlots && props.quickSlots.length === 8) {
+    const result = props.quickSlots.map(slot => slot || { icon: '❓', label: '空', action: null })
+    console.log('[GlobalRadialMenu] Using props.quickSlots:', result)
+    return result
+  }
+  console.log('[GlobalRadialMenu] Using defaultQuickSlots')
+  return defaultQuickSlots
 })
 
 const emit = defineEmits(['select', 'cancel', 'close'])
 
-// 尺寸配置
-const size = 340
+// 尺寸配置 - 根据 radius 动态计算
+const size = computed(() => props.radius * 2.2)
 const sectorCount = 8
 const sectorAngle = (Math.PI * 2) / sectorCount
 
-// 三层半径配置
-const outerRadius = 150
-const middleRadius = 110
-const innerRadius = 70
-const centerRadius = 35
+// 三层半径配置 - 根据 radius 动态计算
+const outerRadius = computed(() => props.radius)
+const middleRadius = computed(() => Math.round(props.radius * 0.7))
+const innerRadius = computed(() => Math.round(props.radius * 0.45))
+const centerRadius = computed(() => Math.round(props.radius * 0.2))
+const iconFontSize = computed(() => Math.max(14, Math.round(props.radius / 6)))
+const labelFontSize = computed(() => Math.max(10, Math.round(props.radius / 10)))
 
 // 状态
 const activeSector = ref(-1)
 const activeLayer = ref(-1)
+const isProcessingAction = ref(false)  // 防止重复处理
 
 // 主题颜色配置
 const themes = {
@@ -233,18 +302,32 @@ const themes = {
 
 const themeColors = computed(() => themes[props.theme] || themes.dark)
 
+// 默认槽位配置（当没有传入配置时使用）
+const defaultSlots = [
+  [{ icon: '📋', label: 'JSON', action: 'json-format' }, { icon: '🔍', label: '提取', action: 'extract-info' }, { icon: '🔑', label: 'UUID', action: 'generate-uuid' }],
+  [{ icon: '⏰', label: '时间戳', action: 'timestamp-convert' }, { icon: '⏱️', label: 'Cron', action: 'cron-helper' }, { icon: '⏳', label: '倒计时', action: 'timer' }],
+  [{ icon: '🔢', label: '计算器', action: 'calculator' }, { icon: '🔤', label: '编码', action: 'encoder' }, { icon: '🔐', label: '密码', action: 'generate-password' }],
+  [{ icon: '📝', label: '正则', action: 'regex-helper' }, { icon: '📄', label: 'MD', action: 'markdown-preview' }, { icon: '💡', label: '闪念', action: 'memo' }],
+  [{ icon: '🎨', label: '颜色', action: 'color-convert' }, { icon: '🎯', label: '取色', action: 'pick-color' }, null],
+  [{ icon: '🤖', label: 'AI', action: 'ai-assistant' }, { icon: '🌍', label: '翻译', action: 'translate' }, { icon: '🌐', label: '搜索', action: 'search-google' }],
+  [{ icon: '📎', label: '剪贴板', action: 'clipboard-history' }, { icon: '👁️', label: 'OCR', action: 'ocr' }, { icon: '📱', label: '二维码', action: 'generate-qr' }],
+  [{ icon: '🔒', label: '锁屏', action: 'lock-screen' }, null, null]
+]
+
 // 将 menuItems 转换为 slots 结构
 const normalizedSlots = computed(() => {
-  // 如果直接传入 slots，使用它
-  if (props.slots && props.slots.length > 0) {
+  // 如果直接传入有效的 slots，使用它
+  if (props.slots && props.slots.length === sectorCount && props.slots.some(s => s && s.some(l => l))) {
+    console.log('[GlobalRadialMenu] Using provided slots')
     return props.slots
   }
-  // 否则从 menuItems 转换
-  const result = Array(sectorCount).fill(null).map(() => Array(3).fill(null))
+  // 从 menuItems 转换
   if (props.menuItems && props.menuItems.length > 0) {
-    props.menuItems.forEach((item, index) => {
+    console.log('[GlobalRadialMenu] Converting menuItems to slots')
+    const result = Array(sectorCount).fill(null).map(() => Array(3).fill(null))
+    props.menuItems.forEach((item) => {
       // 如果有 sector/layer 属性则使用，否则按索引分配到不同扇区的外层
-      const sector = item.sector !== undefined ? item.sector : (index % sectorCount)
+      const sector = item.sector !== undefined ? item.sector : 0
       const layer = item.layer !== undefined ? item.layer : 0
       if (sector >= 0 && sector < sectorCount && layer >= 0 && layer < 3) {
         result[sector][layer] = {
@@ -254,13 +337,44 @@ const normalizedSlots = computed(() => {
         }
       }
     })
+    return result
   }
-  return result
+  // 使用默认配置
+  console.log('[GlobalRadialMenu] Using default slots')
+  return defaultSlots
 })
 
 // 获取槽位数据
 const getSlotData = (sector, layer) => {
   return normalizedSlots.value[sector]?.[layer] || null
+}
+
+// 获取 Element Plus 图标组件
+const getSlotElIcon = (sector, layer) => {
+  const slot = getSlotData(sector, layer)
+  if (!slot || !slot.action) return null
+  const iconName = FEATURE_ICONS[slot.action]
+  if (iconName && ElementPlusIcons[iconName]) {
+    return ElementPlusIcons[iconName]
+  }
+  return null
+}
+
+// 获取槽位的图片图标（用户自定义工具）
+const getSlotImgIcon = (sector, layer) => {
+  const slot = getSlotData(sector, layer)
+  if (!slot) return null
+  return slot.imgIcon || null
+}
+
+// 获取快捷按钮的 Element Plus 图标
+const getQuickActionElIcon = (action) => {
+  if (!action || !action.action) return null
+  const iconName = FEATURE_ICONS[action.action]
+  if (iconName && ElementPlusIcons[iconName]) {
+    return ElementPlusIcons[iconName]
+  }
+  return null
 }
 
 // 当前选中项
@@ -278,17 +392,53 @@ const centerStyle = computed(() => ({
 }))
 
 const svgStyle = computed(() => ({
-  left: `${props.centerX - size / 2}px`,
-  top: `${props.centerY - size / 2}px`,
-  width: `${size}px`,
-  height: `${size}px`
+  left: `${props.centerX - size.value / 2}px`,
+  top: `${props.centerY - size.value / 2}px`,
+  width: `${size.value}px`,
+  height: `${size.value}px`
 }))
 
-// 获取层的内外半径
+// 图标层样式
+const iconLayerStyle = computed(() => ({
+  left: `${props.centerX - size.value / 2}px`,
+  top: `${props.centerY - size.value / 2}px`,
+  width: `${size.value}px`,
+  height: `${size.value}px`
+}))
+
+// 获取图标在屏幕上的位置样式
+const getIconStyle = (sector, layer) => {
+  const pos = getSlotCenter(sector, layer)
+  // 转换为相对于图标层的位置
+  const x = pos.x + size.value / 2
+  const y = pos.y + size.value / 2
+  return {
+    left: `${x}px`,
+    top: `${y}px`,
+    transform: 'translate(-50%, -50%)'
+  }
+}
+
+// 获取层的内外半径 - 根据层数动态计算
 const getLayerRadii = (layer) => {
-  if (layer === 0) return { inner: middleRadius, outer: outerRadius }
-  if (layer === 1) return { inner: innerRadius, outer: middleRadius }
-  return { inner: centerRadius, outer: innerRadius }
+  if (props.layers === 1) {
+    // 单层模式：整个环都是外层
+    return { inner: centerRadius.value, outer: outerRadius.value }
+  } else if (props.layers === 2) {
+    // 双层模式
+    if (layer === 0) return { inner: middleRadius.value, outer: outerRadius.value }
+    return { inner: centerRadius.value, outer: middleRadius.value }
+  } else {
+    // 三层模式
+    if (layer === 0) return { inner: middleRadius.value, outer: outerRadius.value }
+    if (layer === 1) return { inner: innerRadius.value, outer: middleRadius.value }
+    return { inner: centerRadius.value, outer: innerRadius.value }
+  }
+}
+
+// 检查层是否在当前显示范围内
+const isLayerVisible = (layer) => {
+  return layer < props.layers
 }
 
 // 计算扇区路径
@@ -370,20 +520,36 @@ const handleMouseMove = (e) => {
   const dy = e.clientY - props.centerY
   const distance = Math.sqrt(dx * dx + dy * dy)
 
-  // 判断所在层
+  // 判断所在层 - 根据层数动态计算
   let layer = -1
-  if (distance < centerRadius) {
+  if (distance < centerRadius.value) {
     clearActive()
     return
-  } else if (distance < innerRadius) {
-    layer = 2  // 内层
-  } else if (distance < middleRadius) {
-    layer = 1  // 中层
-  } else if (distance < outerRadius + 20) {
-    layer = 0  // 外层
+  } else if (distance > outerRadius.value + 20) {
+    clearActive()
+    return
+  }
+
+  // 根据层数确定层
+  if (props.layers === 1) {
+    // 单层模式
+    layer = 0
+  } else if (props.layers === 2) {
+    // 双层模式
+    if (distance < middleRadius.value) {
+      layer = 1  // 内层
+    } else {
+      layer = 0  // 外层
+    }
   } else {
-    clearActive()
-    return
+    // 三层模式
+    if (distance < innerRadius.value) {
+      layer = 2  // 内层
+    } else if (distance < middleRadius.value) {
+      layer = 1  // 中层
+    } else {
+      layer = 0  // 外层
+    }
   }
 
   // 计算扇区
@@ -395,11 +561,39 @@ const handleMouseMove = (e) => {
 }
 
 // 鼠标释放处理
-const handleMouseUp = () => {
+const handleMouseUp = (e) => {
+  // 如果已经在处理动作，跳过
+  if (isProcessingAction.value) {
+    console.log('[GlobalRadialMenu] handleMouseUp: already processing, skip')
+    return
+  }
+
+  // 检查是否点击在数字快捷按钮区域，如果是则忽略（让 click 事件处理）
+  const target = e.target
+  if (target && (target.closest('.quick-buttons') || target.closest('.quick-btn'))) {
+    console.log('[GlobalRadialMenu] mouseup on quick-buttons area, ignoring')
+    return
+  }
+
+  console.log('[GlobalRadialMenu] handleMouseUp called, activeItem:', activeItem.value)
   if (activeItem.value && activeItem.value.action) {
+    const action = activeItem.value.action
+    const data = { ...activeItem.value }
+    console.log('[GlobalRadialMenu] Action to execute:', action)
+    console.log('[GlobalRadialMenu] window.api available:', !!window.api)
+
+    // 通过 IPC 发送到主进程执行动作
+    if (window.api) {
+      console.log('[GlobalRadialMenu] Sending radial-menu-action IPC:', action)
+      window.api.send('radial-menu-action', { action, data })
+    } else {
+      console.error('[GlobalRadialMenu] window.api is NOT available!')
+    }
+
     emit('select', activeItem.value)
     resetAndClose()
   } else {
+    console.log('[GlobalRadialMenu] No activeItem, canceling')
     emit('cancel')
     resetAndClose()
   }
@@ -412,36 +606,115 @@ const resetAndClose = () => {
   emit('close')
 }
 
+// 触发数字快捷功能（鼠标点击）
+const triggerQuickAction = (idx) => {
+  if (isProcessingAction.value) {
+    console.log('[GlobalRadialMenu] Already processing, skip')
+    return
+  }
+
+  console.log('[GlobalRadialMenu] ====== triggerQuickAction START ======')
+
+  // 立即设置处理标志，防止 handleMouseUp 也触发
+  isProcessingAction.value = true
+
+  // 清除轮盘选中状态，防止 handleMouseUp 也发送动作
+  activeSector.value = -1
+  activeLayer.value = -1
+
+  const action = systemActions.value[idx]
+  // 将 Proxy 对象转换为普通对象，否则 IPC 无法序列化
+  const plainAction = JSON.parse(JSON.stringify(action))
+  console.log('[GlobalRadialMenu] Action:', plainAction)
+
+  if (plainAction && plainAction.action && window.api) {
+    console.log('[GlobalRadialMenu] Executing:', plainAction.action)
+
+    try {
+      window.api.send('radial-menu-action', {
+        action: plainAction.action,
+        data: plainAction
+      })
+      console.log('[GlobalRadialMenu] IPC sent successfully')
+    } catch (err) {
+      console.error('[GlobalRadialMenu] IPC error:', err)
+    }
+
+    emit('select', plainAction)
+    setTimeout(() => {
+      resetAndClose()
+    }, 100)
+  } else {
+    // 如果动作无效，重置处理标志
+    isProcessingAction.value = false
+  }
+  console.log('[GlobalRadialMenu] ====== triggerQuickAction END ======')
+}
+
 // 键盘事件
 const handleKeydown = (e) => {
-  if (!props.visible) return
+  if (!props.visible || isProcessingAction.value) {
+    return
+  }
 
   if (e.key === 'Escape') {
     emit('cancel')
     resetAndClose()
   } else if (e.key >= '1' && e.key <= '8') {
-    const sector = parseInt(e.key) - 1
-    // 优先选择外层，如果外层没有则选中层、内层
-    for (let layer = 0; layer < 3; layer++) {
-      const slot = getSlotData(sector, layer)
-      if (slot && slot.action) {
-        emit('select', slot)
+    const idx = parseInt(e.key) - 1
+    const action = systemActions.value[idx]
+    // 将 Proxy 对象转换为普通对象
+    const plainAction = JSON.parse(JSON.stringify(action))
+
+    if (plainAction && plainAction.action && window.api) {
+      isProcessingAction.value = true
+      console.log('[GlobalRadialMenu] Key', e.key, '-> action:', plainAction.action)
+      window.api.send('radial-menu-action', {
+        action: plainAction.action,
+        data: plainAction
+      })
+      emit('select', plainAction)
+      setTimeout(() => {
         resetAndClose()
-        return
-      }
+      }, 100)
     }
   }
 }
 
 // 重置状态
 watch(() => props.visible, (visible) => {
+  console.log('[GlobalRadialMenu] visible changed to:', visible)
+  console.log('[GlobalRadialMenu] systemActions at visible change:', systemActions.value)
   if (visible) {
     activeSector.value = -1
     activeLayer.value = -1
+    isProcessingAction.value = false  // 重置处理标志
   }
 })
 
 onMounted(() => {
+  console.log('[GlobalRadialMenu] Component mounted')
+  console.log('[GlobalRadialMenu] props.visible:', props.visible)
+  console.log('[GlobalRadialMenu] props.quickSlots:', props.quickSlots)
+  console.log('[GlobalRadialMenu] systemActions:', systemActions.value)
+  console.log('[GlobalRadialMenu] window.api available:', !!window.api)
+
+  // 添加原生点击事件监听器作为调试
+  setTimeout(() => {
+    const quickBtns = document.querySelectorAll('.quick-btn')
+    console.log('[GlobalRadialMenu] Found quick-btn elements:', quickBtns.length)
+    quickBtns.forEach((btn, idx) => {
+      btn.addEventListener('mousedown', (e) => {
+        console.log('[GlobalRadialMenu] Native mousedown on quick-btn index:', idx)
+      })
+    })
+  }, 500)
+
+  // 额外添加文档级键盘监听器作为调试
+  document.addEventListener('keydown', (e) => {
+    console.log('[GlobalRadialMenu] Document keydown:', e.key, 'visible:', props.visible)
+  })
+
   window.addEventListener('keydown', handleKeydown)
 })
 
@@ -552,6 +825,33 @@ defineExpose({
   pointer-events: all;
 }
 
+/* 图标层 */
+.icon-layer {
+  position: absolute;
+  pointer-events: none;
+  z-index: 100001;
+}
+
+.slot-icon-wrapper {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.fallback-icon {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.slot-img-icon {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  border-radius: 3px;
+}
+
 /* 快捷键提示 */
 .shortcut-hints {
   position: fixed;
@@ -566,21 +866,64 @@ defineExpose({
   z-index: 100002;
 }
 
-.shortcut-hints span {
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.7);
-  white-space: nowrap;
+/* 数字快捷按钮 - 一行显示 */
+.quick-buttons {
+  position: fixed;
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 4px;
+  z-index: 100002;
+  pointer-events: auto;
 }
 
-.shortcut-hints kbd {
+.quick-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  background: rgba(0, 0, 0, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+  pointer-events: auto;
+}
+
+.quick-btn:hover {
+  background: rgba(64, 158, 255, 0.8);
+  border-color: #409eff;
+  transform: translateY(-2px);
+}
+
+.quick-btn:active {
+  background: rgba(64, 158, 255, 1);
+  transform: translateY(0);
+}
+
+.quick-btn kbd {
   display: inline-block;
-  padding: 2px 6px;
-  margin-right: 4px;
+  padding: 2px 5px;
   font-size: 10px;
   font-family: 'Consolas', monospace;
-  background: rgba(255, 255, 255, 0.15);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
   color: #fff;
+}
+
+.quick-btn .btn-icon {
+  font-size: 14px;
+}
+
+.quick-btn .btn-el-icon {
+  font-size: 14px;
+  color: #fff;
+}
+
+.quick-btn .btn-label {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.9);
+  white-space: nowrap;
 }
 </style>
