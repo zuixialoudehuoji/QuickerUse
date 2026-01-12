@@ -39,17 +39,6 @@
           </div>
           <span class="item-name">{{ feature.label }}</span>
           <div class="item-actions" @click.stop>
-            <el-input
-              v-model="localHotkeys[feature.action]"
-              size="small"
-              placeholder="热键"
-              readonly
-              class="hotkey-input"
-              @keydown="(e) => captureHotkey(e, feature.action)"
-              @focus="focusedAction = feature.action"
-              @blur="focusedAction = ''"
-              :class="{ active: focusedAction === feature.action }"
-            />
             <el-icon
               v-if="blacklist.has(feature.action)"
               class="toggle-icon show"
@@ -67,29 +56,26 @@
 
     <!-- 底部提示 -->
     <div class="footer-hint">
-      点击功能可执行 | 输入框设置全局热键 | 眼睛图标控制显示/隐藏
+      点击功能可执行 | 眼睛图标控制显示/隐藏 | 快捷键请到「设置-快捷键」中配置
     </div>
   </el-dialog>
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch } from 'vue';
+import { ref, computed, watch } from 'vue';
 import { View, Hide } from '@element-plus/icons-vue';
 import * as ElementPlusIcons from '@element-plus/icons-vue';
 import { ALL_FEATURES, FEATURE_ICONS, CATEGORIES } from '@/utils/constants';
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
-  blacklist: { type: Set, default: () => new Set() },
-  hotkeys: { type: Object, default: () => ({}) }
+  blacklist: { type: Set, default: () => new Set() }
 });
 
-const emit = defineEmits(['update:modelValue', 'feature-click', 'hide-feature', 'restore-feature', 'hotkeys-change']);
+const emit = defineEmits(['update:modelValue', 'feature-click', 'hide-feature', 'restore-feature']);
 
 const visible = ref(props.modelValue);
 const selectedCategory = ref('all');
-const localHotkeys = reactive({ ...props.hotkeys });
-const focusedAction = ref('');
 
 const categories = CATEGORIES;
 
@@ -112,10 +98,6 @@ watch(visible, (val) => {
   emit('update:modelValue', val);
 });
 
-watch(() => props.hotkeys, (val) => {
-  Object.assign(localHotkeys, val);
-}, { deep: true });
-
 const getIconComponent = (action) => {
   const iconName = FEATURE_ICONS[action];
   return ElementPlusIcons[iconName] || ElementPlusIcons.Document;
@@ -132,45 +114,6 @@ const hideFeature = (action) => {
 
 const restoreFeature = (action) => {
   emit('restore-feature', action);
-};
-
-// 捕获按键
-const captureHotkey = (e, action) => {
-  e.preventDefault();
-  e.stopPropagation();
-
-  const parts = [];
-  if (e.ctrlKey) parts.push('Ctrl');
-  if (e.altKey) parts.push('Alt');
-  if (e.shiftKey) parts.push('Shift');
-  if (e.metaKey) parts.push('Meta');
-
-  const modifierKeys = ['Control', 'Alt', 'Shift', 'Meta'];
-  if (!modifierKeys.includes(e.key)) {
-    const keyMap = {
-      ' ': 'Space',
-      'ArrowUp': 'Up',
-      'ArrowDown': 'Down',
-      'ArrowLeft': 'Left',
-      'ArrowRight': 'Right',
-      'Escape': 'Esc'
-    };
-    const key = keyMap[e.key] || e.key.toUpperCase();
-    parts.push(key);
-  }
-
-  // Esc 清除热键
-  if (e.key === 'Escape') {
-    localHotkeys[action] = '';
-    emit('hotkeys-change', { ...localHotkeys });
-    return;
-  }
-
-  const hotkey = parts.length > 1 ? parts.join('+') : '';
-  if (hotkey) {
-    localHotkeys[action] = hotkey;
-    emit('hotkeys-change', { ...localHotkeys });
-  }
 };
 </script>
 
@@ -292,21 +235,6 @@ const captureHotkey = (e, action) => {
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
-}
-
-.hotkey-input {
-  width: 90px;
-}
-
-.hotkey-input :deep(.el-input__wrapper) {
-  padding: 0 8px;
-  height: 24px;
-  font-size: 11px;
-}
-
-.hotkey-input.active :deep(.el-input__wrapper) {
-  box-shadow: 0 0 0 1px var(--accent-color) inset !important;
-  background: rgba(64, 158, 255, 0.1);
 }
 
 .toggle-icon {

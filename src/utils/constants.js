@@ -25,6 +25,7 @@ export const FEATURE_ICONS = {
   'generate-qr': 'Grid',
   'clipboard-history': 'DocumentCopy',
   'cron-helper': 'Timer',
+  'open-url': 'Link',
 
   // 生成器
   'generate-uuid': 'Key',
@@ -32,6 +33,7 @@ export const FEATURE_ICONS = {
 
   // 系统工具
   'color-picker': 'Brush',
+  'pick-color': 'Brush',  // 别名
   'timer': 'AlarmClock',
   'memo': 'Memo',
 
@@ -46,7 +48,17 @@ export const FEATURE_ICONS = {
   'ocr': 'Camera',
 
   // AI
-  'ai-assistant': 'ChatDotRound'
+  'ai-assistant': 'ChatDotRound',
+
+  // 系统操作 (数字键功能)
+  'lock-screen': 'Lock',
+  'open-explorer': 'Monitor',
+  'minimize-all': 'Fold',
+  'switch-hosts': 'FolderOpened',
+  'open-regedit': 'SetUp',
+  'open-env-vars': 'Setting',
+  'open-uninstall': 'Delete',
+  'open-network-settings': 'Connection'
 };
 
 // 所有智能功能定义
@@ -234,7 +246,8 @@ export const DEFAULT_SETTINGS = {
   followMouse: true,
   autoStart: false,
   searchEngine: 'google',
-  translateService: 'google'
+  translateService: 'google',
+  radialStyle: 'default' // default | tech | glitch | glass
 };
 
 // 搜索引擎URL模板

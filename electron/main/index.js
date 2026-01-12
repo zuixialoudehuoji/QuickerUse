@@ -25,7 +25,10 @@ let disabledIconImage = null
 let lastActiveWindowHandle = null  // 记录唤醒前的活动窗口句柄
 let dialogWindow = null  // 独立弹出框窗口（全局变量，防止快捷键冲突）
 let globalCreateRadialMenuWindow = null  // 全局轮盘菜单创建函数（供MouseHook调用）
+let globalPreloadRadialWindow = null  // 全局预加载函数引用
 let radialMenuWindow = null  // 轮盘菜单窗口（全局变量，便于清理）
+let preloadedRadialWindow = null  // 预加载的轮盘窗口（用于快速弹出）
+let radialWindowReady = false  // 预加载窗口是否就绪
 
 // 全局清理相关变量（用于退出时清理）
 let preloadedDialogWindow = null  // 预加载的弹出框窗口
@@ -225,6 +228,34 @@ ipcMain.on('license-get-status', (event) => {
   event.reply('license-status', result);
 });
 
+// 打开文件选择对话框（全局注册，确保在窗口创建前可用）
+ipcMain.handle('open-file-dialog', async (event, options = {}) => {
+  const { dialog, BrowserWindow } = require('electron');
+  // 获取当前聚焦的窗口，如果没有则使用 mainWindow
+  const parentWindow = BrowserWindow.getFocusedWindow() || mainWindow;
+  const result = await dialog.showOpenDialog(parentWindow, {
+    title: options.title || '选择文件',
+    filters: options.filters || [
+      { name: '可执行文件', extensions: ['exe', 'lnk', 'bat', 'cmd', 'msi'] },
+      { name: '所有文件', extensions: ['*'] }
+    ],
+    properties: ['openFile']
+  });
+
+  if (result.canceled || result.filePaths.length === 0) {
+    return { canceled: true };
+  }
+
+  const filePath = result.filePaths[0];
+  const fileName = path.basename(filePath);
+
+  return {
+    canceled: false,
+    filePath: filePath,
+    fileName: fileName
+  };
+});
+
 function updateTrayIcon() {
   if (tray && normalIconImage && disabledIconImage) {
     const icon = isAppDisabled ? disabledIconImage : normalIconImage;
@@ -268,12 +299,73 @@ const SPECIAL_ACTIONS = {
   'minimize-all': 'system-action',   // 最小化全部
   'switch-hosts': 'system-action',   // Hosts目录
   'open-regedit': 'system-action',   // 打开注册表
+  'open-env-vars': 'system-action',  // 环境变量编辑
+  'open-uninstall': 'system-action', // 程序卸载页面
+  'open-network-settings': 'system-action', // 网络设置
   'search-google': 'web-search',     // 搜索
   'translate': 'web-translate',      // 翻译
 };
 
-// 快捷键直接打开弹出框（不经过主窗口）- 支持获取选中内容
+// 快捷键直接打开弹出框或执行特殊动作（不经过主窗口）
 async function openDirectDialog(action) {
+  // 先检查是否为特殊动作
+  const specialType = SPECIAL_ACTIONS[action];
+  if (specialType) {
+    console.log('[Main] Executing special action via hotkey:', action, '->', specialType);
+
+    // 获取选中内容用于搜索/翻译
+    const finalText = await captureSelectionOrClipboard();
+
+    if (specialType === 'color-picker') {
+      // 取色器
+      setTimeout(() => {
+        // 触发取色
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('trigger-color-picker');
+        }
+      }, 100);
+    } else if (specialType === 'system-action') {
+      // 系统动作
+      const { exec: execCmd } = require('child_process');
+      switch (action) {
+        case 'lock-screen':
+          systemTools.lockScreen();
+          break;
+        case 'open-explorer':
+          shell.openPath('C:\\');
+          break;
+        case 'minimize-all':
+          execCmd('powershell -NoProfile -Command "(New-Object -ComObject Shell.Application).ToggleDesktop()"');
+          break;
+        case 'switch-hosts':
+          shell.openPath('C:\\Windows\\System32\\drivers\\etc');
+          break;
+        case 'open-regedit':
+          execCmd('regedit');
+          break;
+        case 'open-env-vars':
+          execCmd('rundll32.exe sysdm.cpl,EditEnvironmentVariables');
+          break;
+        case 'open-uninstall':
+          execCmd('control appwiz.cpl');
+          break;
+        case 'open-network-settings':
+          execCmd('ncpa.cpl');
+          break;
+      }
+    } else if (specialType === 'web-search' || specialType === 'web-translate') {
+      // 搜索和翻译 - 发送到主窗口处理（使用用户设置的搜索引擎/翻译服务）
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('trigger-smart-action', {
+          action: action,
+          text: finalText
+        });
+      }
+    }
+    return;
+  }
+
+  // 非特殊动作，检查弹窗配置
   const config = ACTION_TO_DIALOG[action];
   if (!config) {
     console.warn('[Main] Unknown action for direct dialog:', action);
@@ -488,6 +580,29 @@ let cachedSmartHotkeys = {};
 let cachedCustomHotkeys = {};
 let hotkeyRegistrationTimer = null;  // 防抖定时器
 
+// 系统保留快捷键列表（不允许用户设置为功能快捷键）
+// 这些快捷键会干扰 captureSelectionOrClipboard() 中的 Ctrl+C 模拟
+const RESERVED_HOTKEYS = new Set([
+  'Ctrl+C', 'Control+C',  // 复制（核心冲突：会导致无限循环）
+  'Ctrl+V', 'Control+V',  // 粘贴
+  'Ctrl+X', 'Control+X',  // 剪切
+  'Ctrl+A', 'Control+A',  // 全选
+  'Ctrl+Z', 'Control+Z',  // 撤销
+  'Ctrl+Y', 'Control+Y',  // 重做
+  'Ctrl+S', 'Control+S',  // 保存
+]);
+
+// 检查是否为保留快捷键
+function isReservedHotkey(hotkey) {
+  if (!hotkey) return false;
+  // 标准化快捷键格式（统一大小写和顺序）
+  const normalized = hotkey.split('+').map(p => p.trim()).map(p => {
+    if (p.toLowerCase() === 'control') return 'Ctrl';
+    return p.charAt(0).toUpperCase() + p.slice(1).toLowerCase();
+  }).join('+');
+  return RESERVED_HOTKEYS.has(normalized);
+}
+
 // 防抖注册所有快捷键（避免频繁重复注册）
 function debouncedRegisterHotkeys() {
   if (hotkeyRegistrationTimer) {
@@ -502,9 +617,18 @@ function debouncedRegisterHotkeys() {
 
 function registerSmartHotkeys() {
   const validModifiers = ['Alt', 'Ctrl', 'Control', 'Shift', 'Command', 'Cmd', 'Super', 'Meta'];
+  const failedHotkeys = [];  // 收集失败的快捷键
 
   for (const [action, key] of Object.entries(cachedSmartHotkeys)) {
     if (!key) continue;
+
+    // 检查是否为系统保留快捷键
+    if (isReservedHotkey(key)) {
+      console.warn(`[SmartHotkey] Reserved hotkey rejected: ${key} for ${action}`);
+      const actionLabel = action.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+      failedHotkeys.push({ hotkey: key, label: actionLabel, reason: '系统保留快捷键，不可使用' });
+      continue;
+    }
 
     // 验证快捷键格式
     const parts = key.split('+').map(p => p.trim());
@@ -526,19 +650,36 @@ function registerSmartHotkeys() {
         console.log(`[SmartHotkey] ${key} -> ${action} 注册成功`);
       } else {
         console.warn(`[SmartHotkey] ${key} -> ${action} 注册失败，可能被占用`);
+        const actionLabel = action.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        failedHotkeys.push({ hotkey: key, label: actionLabel, reason: '快捷键已被占用' });
       }
     } catch (e) {
       console.error(`[SmartHotkey] Failed to register ${key} for ${action}:`, e);
+      const actionLabel = action.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+      failedHotkeys.push({ hotkey: key, label: actionLabel, reason: e.message || '注册失败' });
     }
+  }
+
+  // 如果有失败的快捷键，通知渲染进程
+  if (failedHotkeys.length > 0 && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('hotkey-register-failed', failedHotkeys);
   }
 }
 
 // 注册自定义工具快捷键
 function registerCustomHotkeys() {
   const validModifiers = ['Alt', 'Ctrl', 'Control', 'Shift', 'Command', 'Cmd', 'Super', 'Meta'];
+  const failedHotkeys = [];  // 收集失败的快捷键
 
   for (const [id, data] of Object.entries(cachedCustomHotkeys)) {
     if (!data.hotkey) continue;
+
+    // 检查是否为系统保留快捷键
+    if (isReservedHotkey(data.hotkey)) {
+      console.warn(`[CustomHotkey] Reserved hotkey rejected: ${data.hotkey}`);
+      failedHotkeys.push({ hotkey: data.hotkey, label: data.tool?.label || '未知工具', reason: '系统保留快捷键，不可使用' });
+      continue;
+    }
 
     // 验证快捷键格式
     const parts = data.hotkey.split('+').map(p => p.trim());
@@ -547,6 +688,7 @@ function registerCustomHotkeys() {
 
     if (!hasModifier || !hasKey) {
       console.warn(`[CustomHotkey] Invalid format: ${data.hotkey}`);
+      failedHotkeys.push({ hotkey: data.hotkey, label: data.tool?.label || '未知工具', reason: '格式无效（需要修饰键+按键）' });
       continue;
     }
 
@@ -559,7 +701,9 @@ function registerCustomHotkeys() {
             shell.openExternal(tool.path);
           } else if (tool.isAdmin && process.platform === 'win32') {
             const { exec } = require('child_process');
-            const cmd = `powershell -Command "Start-Process '${tool.path}' -Verb RunAs"`;
+            // 转义路径中的单引号
+            const escapedPath = tool.path.replace(/'/g, "''");
+            const cmd = `powershell -Command "Start-Process '${escapedPath}' -Verb RunAs"`;
             exec(cmd, (err) => {
               if (err) console.error('Admin Run Error:', err);
             });
@@ -573,10 +717,19 @@ function registerCustomHotkeys() {
       });
       if (ret) {
         console.log(`[CustomHotkey] ${data.hotkey} -> ${data.tool.label} 注册成功`);
+      } else {
+        // 注册返回 false 表示失败（可能被其他程序占用）
+        failedHotkeys.push({ hotkey: data.hotkey, label: data.tool?.label || '未知工具', reason: '快捷键已被占用' });
       }
     } catch (e) {
       console.error(`[CustomHotkey] Failed to register ${data.hotkey}:`, e);
+      failedHotkeys.push({ hotkey: data.hotkey, label: data.tool?.label || '未知工具', reason: e.message || '注册失败' });
     }
+  }
+
+  // 如果有失败的快捷键，通知渲染进程
+  if (failedHotkeys.length > 0 && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('hotkey-register-failed', failedHotkeys);
   }
 }
 
@@ -599,9 +752,19 @@ async function createWindow() {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      webSecurity: true,
+      allowRunningInsecureContent: false
     }
   })
+
+  // 允许文件拖拽 - 阻止默认的导航行为
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    // 阻止拖拽文件时导航到 file:// URL
+    if (url.startsWith('file://')) {
+      event.preventDefault();
+    }
+  });
 
   // 忽略证书错误
   app.commandLine.appendSwitch('ignore-certificate-errors');
@@ -686,6 +849,7 @@ async function createWindow() {
   // === 全局轮盘菜单 ===
 
   // 默认轮盘菜单设置 - 使用 slots 二维数组格式
+  // 图标通过渲染进程的 FEATURE_ICONS 和 SYSTEM_ICONS 映射获取
   const defaultRadialMenuSettings = {
     radius: 120,    // 轮盘半径 (80-200px)
     layers: 2,      // 显示层数 (1-3)
@@ -694,32 +858,32 @@ async function createWindow() {
     // slots[sector][layer] 格式: 8个扇区 x 3层
     slots: [
       // 扇区0: JSON相关
-      [{ icon: '📋', label: 'JSON', action: 'json-format' }, { icon: '🔍', label: '提取', action: 'extract-info' }, null],
+      [{ label: 'JSON', action: 'json-format' }, { label: '提取', action: 'extract-info' }, null],
       // 扇区1: 时间相关
-      [{ icon: '⏰', label: '时间戳', action: 'timestamp-convert' }, { icon: '🔢', label: '计算器', action: 'calculator' }, null],
+      [{ label: '时间戳', action: 'timestamp-convert' }, { label: '计算器', action: 'calculator' }, null],
       // 扇区2: AI相关
-      [{ icon: '🤖', label: 'AI', action: 'ai-assistant' }, { icon: '📎', label: '剪贴板', action: 'clipboard-history' }, null],
+      [{ label: 'AI', action: 'ai-assistant' }, { label: '剪贴板', action: 'clipboard-history' }, null],
       // 扇区3: 颜色相关
-      [{ icon: '🎨', label: '颜色', action: 'color-convert' }, { icon: '🎯', label: '取色', action: 'pick-color' }, null],
+      [{ label: '颜色', action: 'color-convert' }, { label: '取色', action: 'pick-color' }, null],
       // 扇区4: 二维码
-      [{ icon: '📱', label: '二维码', action: 'generate-qr' }, { icon: '👁️', label: 'OCR', action: 'ocr' }, null],
+      [{ label: '二维码', action: 'generate-qr' }, { label: 'OCR', action: 'ocr' }, null],
       // 扇区5: 生成器
-      [{ icon: '🔑', label: 'UUID', action: 'generate-uuid' }, { icon: '🔐', label: '密码', action: 'generate-password' }, null],
+      [{ label: 'UUID', action: 'generate-uuid' }, { label: '密码', action: 'generate-password' }, null],
       // 扇区6: 搜索翻译
-      [{ icon: '🌐', label: '搜索', action: 'search-google' }, { icon: '🌍', label: '翻译', action: 'translate' }, null],
+      [{ label: '搜索', action: 'search-google' }, { label: '翻译', action: 'translate' }, null],
       // 扇区7: 其他
-      [{ icon: '⏳', label: '倒计时', action: 'timer' }, { icon: '💡', label: '闪念', action: 'memo' }, null]
+      [{ label: '倒计时', action: 'timer' }, { label: '闪念', action: 'memo' }, null]
     ],
-    // 数字键快捷功能配置 (1-8)
+    // 数字键快捷功能配置 (1-8) - 默认8个系统功能
     quickSlots: [
-      { icon: '🔒', label: '锁屏', action: 'lock-screen' },
-      { icon: '💻', label: '我的电脑', action: 'open-explorer' },
-      { icon: '📥', label: '显示桌面', action: 'minimize-all' },
-      { icon: '📁', label: 'Hosts', action: 'switch-hosts' },
-      { icon: '🎯', label: '取色', action: 'pick-color' },
-      { icon: '📋', label: '注册表', action: 'open-regedit' },
-      { icon: '⏳', label: '倒计时', action: 'timer' },
-      { icon: '💡', label: '闪念', action: 'memo' }
+      { elIcon: 'Lock', label: '锁屏', action: 'lock-screen' },
+      { elIcon: 'Monitor', label: '我的电脑', action: 'open-explorer' },
+      { elIcon: 'Fold', label: '显示桌面', action: 'minimize-all' },
+      { elIcon: 'FolderOpened', label: 'Hosts', action: 'switch-hosts' },
+      { elIcon: 'SetUp', label: '注册表', action: 'open-regedit' },
+      { elIcon: 'Setting', label: '环境变量', action: 'open-env-vars' },
+      { elIcon: 'Delete', label: '程序卸载', action: 'open-uninstall' },
+      { elIcon: 'Connection', label: '网络设置', action: 'open-network-settings' }
     ],
     menuItems: []
   };
@@ -735,9 +899,21 @@ async function createWindow() {
   if (!radialMenuSettings.layers) {
     radialMenuSettings.layers = defaultRadialMenuSettings.layers;
   }
-  // 确保 quickSlots 存在
-  if (!radialMenuSettings.quickSlots || radialMenuSettings.quickSlots.length !== 8) {
+  // 确保 quickSlots 存在并合并默认值
+  if (!radialMenuSettings.quickSlots || !Array.isArray(radialMenuSettings.quickSlots)) {
     radialMenuSettings.quickSlots = defaultRadialMenuSettings.quickSlots;
+  } else {
+    // 合并用户配置和默认值，确保有8个有效槽位
+    const mergedQuickSlots = [];
+    for (let i = 0; i < 8; i++) {
+      const slot = radialMenuSettings.quickSlots[i];
+      if (slot && slot.action) {
+        mergedQuickSlots.push(slot);
+      } else {
+        mergedQuickSlots.push(defaultRadialMenuSettings.quickSlots[i]);
+      }
+    }
+    radialMenuSettings.quickSlots = mergedQuickSlots;
   }
   console.log('[Main] Radial menu settings loaded:', {
     radius: radialMenuSettings.radius,
@@ -750,17 +926,93 @@ async function createWindow() {
   // 预捕获的选中内容（在显示轮盘前捕获）
   let radialMenuPreCapturedText = '';
 
-  // 创建全局轮盘菜单窗口
-  async function createRadialMenuWindow(x, y) {
+  // 缓存的轮盘初始化设置（避免每次都读取配置）
+  let cachedRadialInitSettings = null;
+
+  // 更新缓存的初始化设置
+  function updateCachedRadialSettings() {
+    cachedRadialInitSettings = {
+      ...radialMenuSettings,
+      theme: configManager.get("theme") || "dark",
+      radialStyle: configManager.get("radialStyle") || "default"
+    };
+  }
+  // 初始化缓存
+  updateCachedRadialSettings();
+
+  // 预加载轮盘菜单窗口 - 提升弹出速度
+  function preloadRadialMenuWindow() {
+    if (preloadedRadialWindow && !preloadedRadialWindow.isDestroyed()) {
+      return; // 已有预加载窗口
+    }
+
+    const primaryDisplay = screen.getPrimaryDisplay();
+    const { width, height } = primaryDisplay.workAreaSize;
+
+    preloadedRadialWindow = new BrowserWindow({
+      width: width,
+      height: height,
+      x: 0,
+      y: 0,
+      show: false,  // 预加载时不显示
+      frame: false,
+      transparent: true,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+      resizable: false,
+      focusable: true,
+      webPreferences: {
+        preload: join(__dirname, '../preload/index.js'),
+        sandbox: false,
+        contextIsolation: true,
+        nodeIntegration: false,
+        backgroundThrottling: false,  // 禁止后台节流
+        enablePreferredSizeMode: false  // 禁用首选大小模式
+      }
+    });
+
+    // 加载轮盘菜单页面
+    if (isDev) {
+      const devServerUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173';
+      preloadedRadialWindow.loadURL(`${devServerUrl}?radialMenuMode=true`);
+    } else {
+      preloadedRadialWindow.loadFile(join(__dirname, '../../dist/index.html'), {
+        query: { radialMenuMode: 'true' }
+      });
+    }
+
+    preloadedRadialWindow.webContents.on('context-menu', (e) => e.preventDefault());
+
+    preloadedRadialWindow.webContents.once("dom-ready", () => {
+      radialWindowReady = true;
+      // 预发送设置数据，这样显示时只需要发送坐标
+      if (preloadedRadialWindow && !preloadedRadialWindow.isDestroyed()) {
+        updateCachedRadialSettings();
+        preloadedRadialWindow.webContents.send("radial-menu-preload-settings", cachedRadialInitSettings);
+      }
+      console.log('[Main] Radial menu window preloaded and settings sent');
+    });
+
+    preloadedRadialWindow.on("closed", () => {
+      preloadedRadialWindow = null;
+      radialWindowReady = false;
+      // 关闭后立即预加载下一个（最快响应）
+      setImmediate(() => preloadRadialMenuWindow());
+    });
+  }
+
+  // 创建全局轮盘菜单窗口 - 极速版：优先使用预加载窗口
+  function createRadialMenuWindow(x, y) {
     // 如果有已显示的轮盘窗口，先销毁
     if (radialMenuWindow && !radialMenuWindow.isDestroyed()) {
       radialMenuWindow.destroy();
       radialMenuWindow = null;
     }
 
-    // 使用统一的捕获函数获取选中内容
-    radialMenuPreCapturedText = await captureSelectionOrClipboard();
-    console.log('[RadialMenu] Captured text length:', radialMenuPreCapturedText.length);
+    // 异步捕获选中内容（不阻塞显示）
+    captureSelectionOrClipboard().then(text => {
+      radialMenuPreCapturedText = text;
+    });
 
     const primaryDisplay = screen.getPrimaryDisplay();
     const { width, height } = primaryDisplay.workAreaSize;
@@ -768,13 +1020,36 @@ async function createWindow() {
     // 边界检测 - 确保轮盘不超出屏幕
     const radius = radialMenuSettings.radius || 120;
     const padding = radius + 30;
-    let adjustedX = x;
-    let adjustedY = y;
-    if (adjustedX < padding) adjustedX = padding;
-    if (adjustedX > width - padding) adjustedX = width - padding;
-    if (adjustedY < padding) adjustedY = padding;
-    if (adjustedY > height - padding) adjustedY = height - padding;
+    let adjustedX = Math.max(padding, Math.min(x, width - padding));
+    let adjustedY = Math.max(padding, Math.min(y, height - padding));
 
+    // 优先使用预加载窗口（毫秒级弹出）
+    if (preloadedRadialWindow && !preloadedRadialWindow.isDestroyed() && radialWindowReady) {
+      radialMenuWindow = preloadedRadialWindow;
+      preloadedRadialWindow = null;
+      radialWindowReady = false;
+
+      // 只发送坐标，设置已经预发送了
+      radialMenuWindow.webContents.send("radial-menu-show", {
+        centerX: adjustedX,
+        centerY: adjustedY
+      });
+      radialMenuWindow.show();
+      radialMenuWindow.focus();
+
+      // 设置 blur 事件
+      radialMenuWindow.once("blur", () => {
+        if (radialMenuWindow && !radialMenuWindow.isDestroyed()) {
+          radialMenuWindow.destroy();
+        }
+      });
+      radialMenuWindow.once("closed", () => {
+        radialMenuWindow = null;
+      });
+      return;
+    }
+
+    // 后备方案：创建新窗口（首次使用或预加载未就绪）
     radialMenuWindow = new BrowserWindow({
       width: width,
       height: height,
@@ -790,7 +1065,8 @@ async function createWindow() {
         preload: join(__dirname, '../preload/index.js'),
         sandbox: false,
         contextIsolation: true,
-        nodeIntegration: false
+        nodeIntegration: false,
+        backgroundThrottling: false
       }
     });
 
@@ -804,44 +1080,37 @@ async function createWindow() {
       });
     }
 
-    // 转发轮盘窗口控制台消息到终端（调试用）
-    radialMenuWindow.webContents.on('console-message', (event, level, message) => {
-      if (message.includes('[GlobalRadialMenu]') || message.includes('[RadialMenu]')) {
-        console.log('[RadialMenuWindow Console]', message);
-      }
-    });
+    radialMenuWindow.webContents.on('context-menu', (e) => e.preventDefault());
 
-    radialMenuWindow.webContents.on('context-menu', (e) => {
-      e.preventDefault();
-    });
-
-    radialMenuWindow.webContents.once('dom-ready', () => {
+    radialMenuWindow.webContents.once("dom-ready", () => {
       if (radialMenuWindow && !radialMenuWindow.isDestroyed()) {
-        radialMenuWindow.webContents.send('radial-menu-init', {
+        updateCachedRadialSettings();
+        radialMenuWindow.webContents.send("radial-menu-init", {
           centerX: adjustedX,
           centerY: adjustedY,
-          settings: radialMenuSettings
+          settings: cachedRadialInitSettings
         });
         radialMenuWindow.show();
         radialMenuWindow.focus();
-        radialMenuWindow.webContents.focus();
-        console.log('[Main] Radial menu shown at:', adjustedX, adjustedY);
       }
     });
 
-    radialMenuWindow.on('blur', () => {
+    radialMenuWindow.once("blur", () => {
       if (radialMenuWindow && !radialMenuWindow.isDestroyed()) {
         radialMenuWindow.destroy();
       }
     });
 
-    radialMenuWindow.on('closed', () => {
+    radialMenuWindow.once("closed", () => {
       radialMenuWindow = null;
+      // 关闭后立即预加载
+      setImmediate(() => preloadRadialMenuWindow());
     });
   }
 
   // 将 createRadialMenuWindow 存储到全局变量，供 MouseHook 调用
   globalCreateRadialMenuWindow = createRadialMenuWindow;
+  globalPreloadRadialWindow = preloadRadialMenuWindow;
 
   // 打开轮盘菜单
   ipcMain.on('open-radial-menu', (event, { x, y }) => {
@@ -947,6 +1216,18 @@ async function createWindow() {
                 console.log('[Main] Opening regedit');
                 execCmd('regedit');
                 break;
+              case 'open-env-vars':
+                console.log('[Main] Opening environment variables');
+                execCmd('rundll32.exe sysdm.cpl,EditEnvironmentVariables');
+                break;
+              case 'open-uninstall':
+                console.log('[Main] Opening programs and features');
+                execCmd('control appwiz.cpl');
+                break;
+              case 'open-network-settings':
+                console.log('[Main] Opening network settings');
+                execCmd('ncpa.cpl');
+                break;
               default:
                 console.warn('[Main] Unknown system action:', action);
             }
@@ -1016,8 +1297,14 @@ async function createWindow() {
 
   // 更新轮盘菜单设置
   ipcMain.on('update-radial-menu-settings', (event, settings) => {
-    radialMenuSettings = settings;
-    configManager.set('radialMenuSettings', settings);
+    // 如果传入 null 或无效值，使用默认设置
+    if (!settings) {
+      radialMenuSettings = { ...defaultRadialMenuSettings };
+      configManager.set('radialMenuSettings', null); // 清除保存的配置
+    } else {
+      radialMenuSettings = settings;
+      configManager.set('radialMenuSettings', settings);
+    }
     console.log('[Main] Radial menu settings updated');
   });
 
@@ -1049,10 +1336,10 @@ async function createWindow() {
       if (targetPath.startsWith('http')) {
         await shell.openExternal(targetPath);
       } else if (isAdmin && process.platform === 'win32') {
-         // Windows Run as Admin
+         // Windows Run as Admin - 转义路径中的单引号
          const { exec } = require('child_process');
-         // 使用 PowerShell 启动以获得管理员权限
-         const cmd = `powershell -Command "Start-Process '${targetPath}' -Verb RunAs"`;
+         const escapedPath = targetPath.replace(/'/g, "''");
+         const cmd = `powershell -Command "Start-Process '${escapedPath}' -Verb RunAs"`;
          exec(cmd, (err) => {
             if (err) console.error('Admin Run Error:', err);
          });
@@ -1179,6 +1466,26 @@ async function createWindow() {
     else if (args.action === 'delete') {
       secretManager.removeItem(args.key);
       event.reply('secret-op-result', { success: true });
+    }
+    // 导出密钥（使用 PIN 加密）
+    else if (args.action === 'export') {
+      const result = secretManager.exportSecrets(args.pin);
+      event.reply('secret-export-result', result);
+    }
+    // 导入密钥（使用 PIN 解密）
+    else if (args.action === 'import') {
+      const success = secretManager.importSecrets(args.secrets, args.pin);
+      event.reply('secret-import-result', { success });
+    }
+    // 检查是否有密钥
+    else if (args.action === 'has-secrets') {
+      event.reply('secret-has-secrets', { hasSecrets: secretManager.getAllKeys().length > 0 });
+    }
+    // 清除所有密钥（用于重置功能）
+    else if (args.action === 'clear-all') {
+      const success = secretManager.clearAll();
+      event.reply('secret-op-result', { success });
+      console.log('[Main] All secrets cleared:', success);
     }
   });
 
@@ -3030,7 +3337,7 @@ if (!gotTheLock) {
   });
 
   // Electron应用准备就绪
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     // 初始化密钥管理器
     secretManager.init();
 
@@ -3075,8 +3382,8 @@ if (!gotTheLock) {
       disabledIconImage = nativeImage.createFromDataURL(disabledBase64);
     }
 
-    // 4. 创建窗口 (此时 normalIconImage 一定有值)
-    createWindow()
+    // 4. 创建窗口 (此时 normalIconImage 一定有值) - 必须 await 确保 IPC 初始化完成
+    await createWindow()
 
     // 5. 创建托盘
     try {
@@ -3198,6 +3505,32 @@ if (!gotTheLock) {
     } else {
       console.log('[Main] MouseHook skipped:', process.platform !== 'win32' ? 'non-Windows platform' : 'disabled by user');
     }
+
+    // 预加载轮盘菜单窗口（始终预加载，因为中键召唤总是显示轮盘）
+    // 立即预加载，不等待
+    setImmediate(() => {
+      if (globalPreloadRadialWindow) {
+        globalPreloadRadialWindow();
+        console.log('[Main] Radial menu preload started immediately');
+      }
+    });
+
+    // 预热 desktopCapturer（提升取色器首次打开速度）
+    // 首次调用 desktopCapturer.getSources() 需要初始化，会比较慢
+    // 这里用小尺寸预热一次，后续调用就会快很多
+    setTimeout(async () => {
+      try {
+        const { desktopCapturer } = require('electron');
+        console.log('[Main] Pre-warming desktopCapturer...');
+        await desktopCapturer.getSources({
+          types: ['screen'],
+          thumbnailSize: { width: 1, height: 1 }  // 最小尺寸，仅用于初始化
+        });
+        console.log('[Main] desktopCapturer pre-warmed successfully');
+      } catch (e) {
+        console.warn('[Main] Failed to pre-warm desktopCapturer:', e.message);
+      }
+    }, 2000); // 2秒后预热，避免影响启动速度
 
     // 窗口监控和清理 - 每30秒检查一次残留窗口
     windowCleanupTimer = setInterval(() => {

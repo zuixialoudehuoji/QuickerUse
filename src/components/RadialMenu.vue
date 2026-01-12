@@ -9,7 +9,7 @@
     <!-- 中心点指示 -->
     <div class="radial-center" :style="centerStyle">
       <div class="center-circle">
-        <span class="center-icon">{{ activeItem?.icon || '⚡' }}</span>
+        <span class="center-icon">{{ activeItem ? getIconSymbol(activeItem.action) : '⚡' }}</span>
       </div>
       <div class="center-label" v-if="activeItem">{{ activeItem.label }}</div>
     </div>
@@ -42,7 +42,7 @@
             :fill="activeIndex === index ? '#fff' : 'rgba(255,255,255,0.7)'"
             font-size="20"
             class="sector-icon"
-          >{{ item.icon }}</text>
+          >{{ getIconSymbol(item.action) }}</text>
           <!-- 标签 -->
           <text
             :x="getLabelPosition(index).x"
@@ -72,20 +72,21 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { FEATURE_ICONS } from '../utils/constants'
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
   items: {
     type: Array,
     default: () => [
-      { label: 'JSON格式化', icon: '📋', action: 'json-format' },
-      { label: '时间转换', icon: '⏰', action: 'timestamp-convert' },
-      { label: '计算器', icon: '🔢', action: 'calculator' },
-      { label: '编码转换', icon: '🔤', action: 'encoder' },
-      { label: '颜色转换', icon: '🎨', action: 'color-convert' },
-      { label: '正则助手', icon: '📝', action: 'regex-helper' },
-      { label: 'AI助手', icon: '🤖', action: 'ai-assistant' },
-      { label: '剪贴板', icon: '📎', action: 'clipboard-history' }
+      { label: 'JSON格式化', action: 'json-format' },
+      { label: '时间转换', action: 'timestamp-convert' },
+      { label: '计算器', action: 'calculator' },
+      { label: '编码转换', action: 'encoder' },
+      { label: '颜色转换', action: 'color-convert' },
+      { label: '正则助手', action: 'regex-helper' },
+      { label: 'AI助手', action: 'ai-assistant' },
+      { label: '剪贴板', action: 'clipboard-history' }
     ]
   },
   centerX: { type: Number, default: 0 },
@@ -93,6 +94,38 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['select', 'cancel', 'close'])
+
+// 简化图标符号映射 (SVG text 无法使用 Element Plus 图标，使用文字符号)
+const ICON_SYMBOLS = {
+  'json-format': '{}',
+  'timestamp-convert': '⏰',
+  'calculator': '🔢',
+  'encoder': '🔤',
+  'color-convert': '🎨',
+  'regex-helper': '.*',
+  'ai-assistant': 'AI',
+  'clipboard-history': '📋',
+  'search-google': '🔍',
+  'translate': '🌐',
+  'generate-qr': '▣',
+  'generate-uuid': '#',
+  'generate-password': '🔑',
+  'timer': '⏱',
+  'memo': '📝',
+  'ocr': '👁',
+  'lock-screen': '🔒',
+  'open-explorer': '💻',
+  'minimize-all': '⬇',
+  'switch-hosts': '📁',
+  'open-regedit': '⚙',
+  'open-env-vars': '⚙',
+  'open-uninstall': '🗑',
+  'open-network-settings': '🌐'
+}
+
+const getIconSymbol = (action) => {
+  return ICON_SYMBOLS[action] || '•'
+}
 
 const size = 280
 const innerRadius = 45

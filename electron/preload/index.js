@@ -1,5 +1,5 @@
 // electron/preload/index.js (预加载脚本)
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
 // 暴露一个安全的API给渲染进程
 // 渲染进程可以通过 window.api.xxx 调用主进程功能
@@ -33,7 +33,7 @@ contextBridge.exposeInMainWorld('api', {
    */
   on: (channel, listener) => {
     // 确保只监听允许的通道，增加安全性
-    const validChannels = ['main-process-message', 'clipboard-data', 'foreground-process', 'window-pinned', 'script-list', 'file-server-url', 'secret-status', 'secret-op-result', 'secret-value', 'secret-list', 'trigger-smart-action', 'config-data', 'file-icon-data', 'secret-auth-status', 'secret-verify-result', 'auto-start-status', 'color-picked', 'middle-click-status', 'show-about', 'snip-pin-result', 'clipboard-history-update', 'clipboard-history-data', 'clipboard-history-use-result', 'clipboard-history-delete-result', 'clipboard-history-pin-result', 'clipboard-history-clear-result', 'clipboard-history-search-result', 'clipboard-history-content-result', 'clipboard-history-image-pin-result', 'dialog-init', 'dialog-closed', 'dialog-result', 'ai-chat-result', 'ai-chat-stream', 'radial-menu-init', 'image-pin-save-result', 'clipboard-image-result', 'timer-finished', 'active-timers-list', 'export-config-result', 'import-config-result', 'config-path', 'first-launch-config', 'license-status', 'license-activate-result'];
+    const validChannels = ['main-process-message', 'clipboard-data', 'foreground-process', 'window-pinned', 'script-list', 'file-server-url', 'secret-status', 'secret-op-result', 'secret-value', 'secret-list', 'trigger-smart-action', 'config-data', 'file-icon-data', 'secret-auth-status', 'secret-verify-result', 'auto-start-status', 'color-picked', 'middle-click-status', 'show-about', 'snip-pin-result', 'clipboard-history-update', 'clipboard-history-data', 'clipboard-history-use-result', 'clipboard-history-delete-result', 'clipboard-history-pin-result', 'clipboard-history-clear-result', 'clipboard-history-search-result', 'clipboard-history-content-result', 'clipboard-history-image-pin-result', 'dialog-init', 'dialog-closed', 'dialog-result', 'ai-chat-result', 'ai-chat-stream', 'radial-menu-init', 'radial-menu-preload-settings', 'radial-menu-show', 'image-pin-save-result', 'clipboard-image-result', 'timer-finished', 'active-timers-list', 'export-config-result', 'import-config-result', 'config-path', 'first-launch-config', 'license-status', 'license-activate-result', 'hotkey-register-failed'];
     if (validChannels.includes(channel)) {
       ipcRenderer.on(channel, (event, ...args) => listener(...args));
     }
@@ -45,7 +45,7 @@ contextBridge.exposeInMainWorld('api', {
    * @param {Function} listener - 监听回调函数
    */
   off: (channel, listener) => {
-    const validChannels = ['main-process-message', 'clipboard-data', 'foreground-process', 'window-pinned', 'script-list', 'file-server-url', 'secret-status', 'secret-op-result', 'secret-value', 'secret-list', 'trigger-smart-action', 'config-data', 'file-icon-data', 'secret-auth-status', 'secret-verify-result', 'auto-start-status', 'color-picked', 'middle-click-status', 'show-about', 'snip-pin-result', 'clipboard-history-update', 'clipboard-history-data', 'clipboard-history-use-result', 'clipboard-history-delete-result', 'clipboard-history-pin-result', 'clipboard-history-clear-result', 'clipboard-history-search-result', 'clipboard-history-content-result', 'clipboard-history-image-pin-result', 'dialog-init', 'dialog-closed', 'dialog-result', 'ai-chat-result', 'ai-chat-stream', 'radial-menu-init', 'image-pin-save-result', 'timer-finished', 'active-timers-list', 'export-config-result', 'import-config-result', 'config-path', 'first-launch-config', 'license-status', 'license-activate-result'];
+    const validChannels = ['main-process-message', 'clipboard-data', 'foreground-process', 'window-pinned', 'script-list', 'file-server-url', 'secret-status', 'secret-op-result', 'secret-value', 'secret-list', 'trigger-smart-action', 'config-data', 'file-icon-data', 'secret-auth-status', 'secret-verify-result', 'auto-start-status', 'color-picked', 'middle-click-status', 'show-about', 'snip-pin-result', 'clipboard-history-update', 'clipboard-history-data', 'clipboard-history-use-result', 'clipboard-history-delete-result', 'clipboard-history-pin-result', 'clipboard-history-clear-result', 'clipboard-history-search-result', 'clipboard-history-content-result', 'clipboard-history-image-pin-result', 'dialog-init', 'dialog-closed', 'dialog-result', 'ai-chat-result', 'ai-chat-stream', 'radial-menu-init', 'radial-menu-preload-settings', 'radial-menu-show', 'image-pin-save-result', 'timer-finished', 'active-timers-list', 'export-config-result', 'import-config-result', 'config-path', 'first-launch-config', 'license-status', 'license-activate-result'];
     if (validChannels.includes(channel)) {
       ipcRenderer.removeListener(channel, listener);
     }
@@ -84,6 +84,24 @@ contextBridge.exposeInMainWorld('api', {
     if (validChannels.includes(channel)) {
       ipcRenderer.send(channel, ...args);
     }
+  },
+
+  /**
+   * 获取拖拽文件的真实路径 (打包后必需)
+   * @param {File} file - 拖拽的文件对象
+   * @returns {string} - 文件的绝对路径
+   */
+  getPathForFile: (file) => {
+    return webUtils.getPathForFile(file);
+  },
+
+  /**
+   * 打开文件选择对话框
+   * @param {Object} options - 对话框选项
+   * @returns {Promise} - 返回选择的文件路径
+   */
+  openFileDialog: (options) => {
+    return ipcRenderer.invoke('open-file-dialog', options);
   },
 
   // ... 更多功能将在此处暴露 ...

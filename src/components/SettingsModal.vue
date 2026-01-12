@@ -27,7 +27,24 @@
             <el-select v-model="localSettings.theme" size="small" @change="handleSettingChange">
               <el-option value="dark" label="深色" />
               <el-option value="light" label="浅色" />
+              <el-option value="cyberpunk" label="赛博朋克" />
+              <el-option value="scifi" label="科幻蓝" />
+              <el-option value="space" label="深空紫" />
+              <el-option value="neon" label="霓虹复古" />
             </el-select>
+          </div>
+
+          <div class="setting-row">
+            <span class="setting-label">轮盘样式</span>
+            <el-select v-model="localSettings.radialStyle" size="small" @change="handleSettingChange">
+              <el-option value="default" label="默认" />
+              <el-option value="tech" label="科技环" />
+              <el-option value="glitch" label="赛博故障" />
+              <el-option value="glass" label="磨砂玻璃" />
+            </el-select>
+          </div>
+          <div class="setting-hint" style="text-align: right; margin-bottom: 8px;">
+            * 颜色和背景纹理跟随「主题」变化
           </div>
 
           <div class="setting-row">
@@ -132,7 +149,7 @@
             </el-button>
           </div>
           <div class="setting-hint">
-            将当前配置导出为 JSON 文件，便于备份或迁移
+            导出包含：主题、快捷键、AI配置、自定义工具、轮盘菜单等（不含密钥）
           </div>
 
           <div class="setting-row">
@@ -148,13 +165,11 @@
           <el-divider />
 
           <div class="danger-zone">
-            <div class="danger-buttons">
-              <el-button type="danger" size="small" @click="handleResetTools">
-                重置我的工具
-              </el-button>
-              <el-button type="danger" size="small" plain @click="handleResetAll">
-                恢复默认设置
-              </el-button>
+            <el-button type="danger" size="small" @click="handleResetAll">
+              重置我的工具
+            </el-button>
+            <div class="setting-hint" style="margin-top: 8px;">
+              恢复默认设置并清空所有自定义配置（工具、快捷键、轮盘等）
             </div>
           </div>
         </div>
@@ -294,7 +309,7 @@ const props = defineProps({
   hotkeys: { type: Object, default: () => ({}) }
 });
 
-const emit = defineEmits(['update:modelValue', 'settings-change', 'hotkeys-change', 'reset-tools', 'reset-all', 'radial-settings-change']);
+const emit = defineEmits(['update:modelValue', 'settings-change', 'hotkeys-change', 'reset-all', 'radial-settings-change']);
 
 const visible = ref(props.modelValue);
 const activeTab = ref('basic');
@@ -464,64 +479,122 @@ const updateEnvSensing = () => {
   envSensing.setEnabled(envSensingEnabled.value);
 };
 
-const handleResetTools = async () => {
+const handleResetAll = async () => {
   try {
-    await ElMessageBox.confirm('确定要重置所有自定义工具吗？', '警告', {
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
-      type: 'warning'
-    });
-    emit('reset-tools');
+    await ElMessageBox.confirm(
+      '确定要重置吗？这将恢复默认设置并清空所有自定义配置（工具、快捷键、轮盘等）',
+      '重置确认',
+      {
+        confirmButtonText: '确定重置',
+        cancelButtonText: '取消',
+        type: 'warning'
+      }
+    );
+    emit('reset-all');
     ElMessage.success('已重置');
   } catch {}
 };
 
-const handleResetAll = async () => {
-  try {
-    await ElMessageBox.confirm('确定要恢复所有默认设置吗？', '警告', {
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
-      type: 'warning'
-    });
-    emit('reset-all');
-    ElMessage.success('已恢复默认设置');
-  } catch {}
-};
-
 // 配置导出
-const handleExportConfig = () => {
-  if (window.api) {
-    // 先收集 localStorage 中的配置
-    const localStorageConfig = {};
-    const keysToExport = [
-      'radial-menu-settings',
-      'custom-actions',
-      'settings',
-      'hotkeys',
-      'feature-order',
-      'hidden-features'
-    ];
-    keysToExport.forEach(key => {
-      const value = localStorage.getItem(key);
-      if (value) {
-        try {
-          localStorageConfig[key] = JSON.parse(value);
-        } catch {
-          localStorageConfig[key] = value;
+const handleExportConfig = async () => {
+  if (!window.api) return;
+
+  // 先检查是否有密钥
+  const hasSecrets = await new Promise(resolve => {
+    const handler = (data) => {
+      window.api.removeAllListeners?.('secret-has-secrets');
+      resolve(data.hasSecrets);
+    };
+    window.api.on('secret-has-secrets', handler);
+    window.api.send('secret-action', { action: 'has-secrets' });
+    // 超时处理
+    setTimeout(() => resolve(false), 1000);
+  });
+
+  let includeSecrets = false;
+  let exportPin = '';
+
+  // 如果有密钥，询问是否导出
+  if (hasSecrets) {
+    try {
+      await ElMessageBox.confirm(
+        '检测到已保存的密钥，是否一并导出？导出时将使用 PIN 码加密保护。',
+        '导出密钥',
+        {
+          confirmButtonText: '包含密钥',
+          cancelButtonText: '不包含',
+          type: 'info'
         }
-      }
-    });
-    // 先保存到主进程配置中，然后导出
-    window.api.send('config-action', {
-      action: 'set',
-      key: 'localStorageBackup',
-      value: localStorageConfig
-    });
-    // 稍等一下让配置保存，然后导出
-    setTimeout(() => {
-      window.api.send('export-config');
-    }, 100);
+      );
+      includeSecrets = true;
+      // 要求输入 PIN 码
+      const { value } = await ElMessageBox.prompt(
+        '请输入 PIN 码用于加密密钥（导入时需要相同 PIN）',
+        '加密密钥',
+        {
+          confirmButtonText: '确定',
+          cancelButtonText: '取消',
+          inputType: 'password',
+          inputPlaceholder: '输入 PIN 码',
+          inputValidator: (val) => val && val.length >= 4 ? true : 'PIN 码至少 4 位'
+        }
+      );
+      exportPin = value;
+    } catch {
+      // 用户选择不包含密钥或取消
+      includeSecrets = false;
+    }
   }
+
+  // 收集 localStorage 中的配置
+  const localStorageConfig = {};
+  const keysToExport = [
+    'radial-menu-settings',   // 轮盘菜单配置
+    'custom-actions',         // 自定义工具
+    'app-settings',           // 应用设置（主题、搜索引擎等）
+    'smart-hotkeys',          // 快捷键配置
+    'smart-order',            // 功能排序
+    'smart-blacklist',        // 隐藏的功能
+    'ai-config',              // AI 配置
+    'env-custom-rules',       // 环境感知自定义规则
+    'env-sensing-enabled'     // 环境感知开关
+  ];
+  keysToExport.forEach(key => {
+    const value = localStorage.getItem(key);
+    if (value) {
+      try {
+        localStorageConfig[key] = JSON.parse(value);
+      } catch {
+        localStorageConfig[key] = value;
+      }
+    }
+  });
+
+  // 如果需要导出密钥，获取加密后的密钥数据
+  if (includeSecrets && exportPin) {
+    const secretsData = await new Promise(resolve => {
+      const handler = (data) => {
+        window.api.removeAllListeners?.('secret-export-result');
+        resolve(data);
+      };
+      window.api.on('secret-export-result', handler);
+      window.api.send('secret-action', { action: 'export', pin: exportPin });
+      setTimeout(() => resolve({ hasSecrets: false }), 3000);
+    });
+    if (secretsData.hasSecrets) {
+      localStorageConfig['_encrypted_secrets'] = secretsData.secrets;
+    }
+  }
+
+  // 保存到主进程配置中，然后导出
+  window.api.send('config-action', {
+    action: 'set',
+    key: 'localStorageBackup',
+    value: localStorageConfig
+  });
+  setTimeout(() => {
+    window.api.send('export-config');
+  }, 100);
 };
 
 // 配置导入
@@ -646,12 +719,50 @@ onMounted(() => {
       }
     });
     // 配置导入结果
-    window.api.on('import-config-result', (result) => {
+    window.api.on('import-config-result', async (result) => {
       if (result.canceled) return;
       if (result.success) {
         // 恢复 localStorage 数据
         if (result.localStorageBackup) {
+          // 检查是否有加密的密钥
+          const encryptedSecrets = result.localStorageBackup['_encrypted_secrets'];
+          if (encryptedSecrets && Object.keys(encryptedSecrets).length > 0) {
+            try {
+              // 要求输入 PIN 码解密密钥
+              const { value: importPin } = await ElMessageBox.prompt(
+                '配置文件中包含加密的密钥，请输入导出时使用的 PIN 码进行解密',
+                '解密密钥',
+                {
+                  confirmButtonText: '解密',
+                  cancelButtonText: '跳过密钥',
+                  inputType: 'password',
+                  inputPlaceholder: '输入 PIN 码',
+                  inputValidator: (val) => val && val.length >= 4 ? true : 'PIN 码至少 4 位'
+                }
+              );
+              // 发送解密请求
+              const importSuccess = await new Promise(resolve => {
+                const handler = (data) => {
+                  window.api.removeAllListeners?.('secret-import-result');
+                  resolve(data.success);
+                };
+                window.api.on('secret-import-result', handler);
+                window.api.send('secret-action', { action: 'import', secrets: encryptedSecrets, pin: importPin });
+                setTimeout(() => resolve(false), 5000);
+              });
+              if (importSuccess) {
+                ElMessage.success('密钥已成功导入');
+              } else {
+                ElMessage.error('密钥解密失败，PIN 码可能不正确');
+              }
+            } catch {
+              // 用户选择跳过密钥
+              console.log('[Settings] User skipped secret import');
+            }
+          }
+          // 恢复其他 localStorage 数据（排除加密密钥）
           Object.entries(result.localStorageBackup).forEach(([key, value]) => {
+            if (key === '_encrypted_secrets') return; // 跳过加密密钥
             try {
               localStorage.setItem(key, typeof value === 'string' ? value : JSON.stringify(value));
               console.log('[Settings] Restored localStorage:', key);
@@ -848,21 +959,8 @@ onMounted(() => {
   border-radius: 4px;
 }
 
-.danger-title {
-  font-size: 12px;
-  color: #f56c6c;
-  margin-bottom: 12px;
-}
-
-.danger-buttons {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.danger-buttons .el-button {
+.danger-zone .el-button {
   width: 100%;
-  margin: 0;
 }
 
 /* 密钥管理 */

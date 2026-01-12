@@ -5,17 +5,22 @@
     width="90%"
     :close-on-click-modal="true"
     class="add-tool-dialog"
+    @dragover.prevent="onDragOver"
+    @dragenter.prevent="onDragEnter"
+    @dragleave.prevent="onDragLeave"
+    @drop.prevent="handleFileDrop"
   >
-    <!-- 拖放区域 -->
+    <!-- 拖放区域 - 点击也可以选择文件 -->
     <div class="drop-zone"
          :class="{ 'drop-active': isDragging }"
          @dragenter.prevent="onDragEnter"
          @dragover.prevent="onDragOver"
          @dragleave.prevent="onDragLeave"
-         @drop.prevent="handleFileDrop">
+         @drop.prevent="handleFileDrop"
+         @click="handleDropZoneClick">
       <template v-if="newItem.path">
         <!-- 已选择文件的预览 -->
-        <div class="file-preview">
+        <div class="file-preview" @click.stop>
           <div class="file-icon-large" @click="showIconPicker = true">
             <img v-if="newItem.icon && newItem.icon.startsWith('data:')" :src="newItem.icon" class="preview-icon-img" @error="onIconError">
             <span v-else class="preview-icon-emoji">{{ newItem.icon || '📦' }}</span>
@@ -33,9 +38,9 @@
         </div>
       </template>
       <template v-else>
-        <!-- 拖放提示 -->
+        <!-- 拖放/点击提示 -->
         <el-icon class="drop-icon"><Upload /></el-icon>
-        <p class="drop-text">拖放可执行文件或快捷方式到这里</p>
+        <p class="drop-text">拖放或点击选择可执行文件</p>
         <p class="drop-hint">支持 .exe, .lnk, .bat, .cmd, .msi 文件</p>
       </template>
     </div>
@@ -236,6 +241,10 @@ const onDragEnter = (e) => {
 
 const onDragOver = (e) => {
   e.preventDefault();
+  // 必须设置 dropEffect，否则打包后会显示禁止图标
+  if (e.dataTransfer) {
+    e.dataTransfer.dropEffect = 'copy';
+  }
   isDragging.value = true;
 };
 
@@ -255,7 +264,19 @@ const handleFileDrop = (e) => {
   isDragging.value = false;
   const file = e.dataTransfer?.files?.[0];
   if (file) {
-    const filePath = file.path || file.name;
+    // 获取文件路径：优先使用 Electron API，回退到 file.path 或 file.name
+    let filePath = file.name;
+    try {
+      if (window.api && typeof window.api.getPathForFile === 'function') {
+        filePath = window.api.getPathForFile(file);
+      } else if (file.path) {
+        filePath = file.path;
+      }
+    } catch (err) {
+      console.warn('[AddToolModal] getPathForFile failed:', err);
+      filePath = file.path || file.name;
+    }
+
     const ext = filePath.split('.').pop().toLowerCase();
 
     // 检查是否是支持的文件类型
@@ -277,6 +298,39 @@ const setFileInfo = (filePath, fileName) => {
   // 获取系统文件图标
   if (window.api) {
     window.api.send('get-file-icon', filePath);
+  }
+};
+
+// 点击拖放区域 - 弹出文件选择对话框
+const handleDropZoneClick = async () => {
+  // 如果已有选中的文件，不触发（已有文件时点击由 file-preview 处理）
+  if (newItem.path) return;
+
+  if (!window.api?.openFileDialog) {
+    ElMessage.warning('文件选择功能不可用');
+    return;
+  }
+
+  try {
+    const result = await window.api.openFileDialog({
+      title: '选择可执行文件',
+      filters: [
+        { name: '可执行文件', extensions: ['exe', 'lnk', 'bat', 'cmd', 'msi'] },
+        { name: '所有文件', extensions: ['*'] }
+      ]
+    });
+
+    if (!result.canceled && result.filePath) {
+      const ext = result.filePath.split('.').pop().toLowerCase();
+      if (!['exe', 'lnk', 'bat', 'cmd', 'msi', 'app'].includes(ext)) {
+        ElMessage.warning('请选择可执行文件 (.exe, .lnk, .bat 等)');
+        return;
+      }
+      setFileInfo(result.filePath, result.fileName);
+    }
+  } catch (e) {
+    console.error('文件选择失败:', e);
+    ElMessage.error('文件选择失败: ' + e.message);
   }
 };
 
@@ -356,6 +410,11 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* 确保 dialog 遮罩层允许拖拽事件穿透 */
+.add-tool-dialog :deep(.el-overlay) {
+  pointer-events: auto;
+}
+
 .add-tool-dialog :deep(.el-dialog) {
   background: var(--modal-bg);
   border: 1px solid var(--grid-line);
@@ -383,6 +442,12 @@ onUnmounted(() => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  cursor: pointer;
+}
+
+.drop-zone:hover {
+  border-color: var(--accent-color);
+  background: rgba(64, 158, 255, 0.05);
 }
 
 .drop-zone.drop-active {

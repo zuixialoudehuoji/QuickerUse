@@ -13,6 +13,11 @@
           <template v-else-if="modalData.actionType === 'sql'">
             <span class="action-btn" @click="sqlToIn">转IN</span>
             <span class="action-btn" @click="sqlToComma">逗号分隔</span>
+            <span class="action-btn" @click="sqlJoinWithWrap">拼接</span>
+            <div class="sql-wrap-inputs">
+              <input v-model="sqlPrefix" placeholder="前缀" class="wrap-input" />
+              <input v-model="sqlSuffix" placeholder="后缀" class="wrap-input" />
+            </div>
           </template>
           <template v-else-if="modalData.actionType === 'timestamp'">
             <span class="action-btn" @click="tsToStd">标准</span>
@@ -812,6 +817,10 @@ const qrcodeCanvas = ref(null);
 const clipboardHistoryRef = ref(null);
 const colorPickerInput = ref(null);
 
+// SQL 智能拼接前后缀
+const sqlPrefix = ref("'");
+const sqlSuffix = ref("'");
+
 // 设置相关
 const settingsTab = ref('appearance');
 const localSettings = reactive({
@@ -1508,6 +1517,14 @@ const sqlToComma = () => {
   textContent.value = textContent.value.replace(/(\r\n|\n|\r)/gm, ',');
 };
 
+// 智能拼接：对每一行前后添加自定义字符
+const sqlJoinWithWrap = () => {
+  const lines = textContent.value.split(/[\r\n]+/).map(line => line.trim()).filter(line => line);
+  const prefix = sqlPrefix.value || '';
+  const suffix = sqlSuffix.value || '';
+  textContent.value = lines.map(line => prefix + line + suffix).join('\n');
+};
+
 // 时间戳转换
 const parseTimestamp = (t) => {
   const s = t.trim();
@@ -2025,6 +2042,31 @@ defineExpose({
   flex-wrap: wrap;
   gap: 4px;
   justify-content: flex-end;
+  align-items: center;
+}
+
+/* SQL 智能拼接输入框 */
+.sql-wrap-inputs {
+  display: flex;
+  gap: 4px;
+  margin-left: 8px;
+}
+
+.sql-wrap-inputs .wrap-input {
+  width: 50px;
+  height: 24px;
+  padding: 0 6px;
+  font-size: 11px;
+  color: var(--text-color);
+  background: var(--bg-item);
+  border: 1px solid var(--grid-line);
+  border-radius: 4px;
+  outline: none;
+  text-align: center;
+}
+
+.sql-wrap-inputs .wrap-input:focus {
+  border-color: var(--accent-color);
 }
 
 .action-btn {

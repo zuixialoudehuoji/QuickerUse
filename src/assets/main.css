@@ -31,8 +31,108 @@ html[data-theme="light"] {
   --dot-active: #333;
 }
 
+/* 赛博朋克主题 (Cyberpunk) */
+html[data-theme="cyberpunk"] {
+  --bg-color: #050510;
+  --bg-item: rgba(20, 20, 35, 0.8);
+  --bg-item-hover: rgba(252, 238, 10, 0.15);
+  --border-color: #ff0055;
+  --text-color: #00f3ff;
+  --text-dim: #ff80bf; /* 提亮: 亮粉色 */
+  --grid-line: rgba(0, 243, 255, 0.15);
+  --accent-color: #fcee0a;
+  --modal-bg: rgba(11, 12, 21, 0.95);
+  --dot-color: #444;
+  --dot-active: #00f3ff;
+  --el-mask-color: rgba(5, 5, 16, 0.9);
+  
+  /* 特效变量 */
+  --text-glow: 0 0 10px rgba(0, 243, 255, 0.5);
+  --box-glow: 0 0 15px rgba(255, 0, 85, 0.3);
+  --bg-pattern: 
+    linear-gradient(rgba(0, 243, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 243, 255, 0.05) 1px, transparent 1px);
+  --bg-pattern-size: 40px 40px;
+}
+
+/* 科幻蓝主题 (Sci-Fi Blue) */
+html[data-theme="scifi"] {
+  --bg-color: #020408;
+  --bg-item: rgba(5, 20, 40, 0.8);
+  --bg-item-hover: rgba(0, 204, 255, 0.15);
+  --border-color: rgba(0, 204, 255, 0.4);
+  --text-color: #aaddff;
+  --text-dim: #66ccff; /* 提亮: 亮蓝色 */
+  --grid-line: rgba(0, 68, 102, 0.3);
+  --accent-color: #00ccff;
+  --modal-bg: rgba(3, 10, 20, 0.95);
+  --dot-color: #00334d;
+  --dot-active: #00ccff;
+  --el-mask-color: rgba(2, 4, 8, 0.9);
+
+  /* 特效变量 */
+  --text-glow: 0 0 8px rgba(0, 204, 255, 0.6);
+  --box-glow: 0 0 12px rgba(0, 204, 255, 0.2);
+  --bg-pattern: 
+    radial-gradient(rgba(0, 204, 255, 0.15) 1px, transparent 1px);
+  --bg-pattern-size: 20px 20px;
+}
+
+/* 深空紫主题 (Deep Space) */
+html[data-theme="space"] {
+  --bg-color: #0a0612;
+  --bg-item: rgba(26, 20, 46, 0.8);
+  --bg-item-hover: rgba(157, 0, 255, 0.2);
+  --border-color: #7b42ff;
+  --text-color: #e0d4ff;
+  --text-dim: #c2a3ff; /* 提亮: 亮紫色 */
+  --grid-line: rgba(123, 66, 255, 0.15);
+  --accent-color: #b366ff;
+  --modal-bg: rgba(20, 14, 36, 0.95);
+  --dot-color: #3d2c63;
+  --dot-active: #b366ff;
+  --el-mask-color: rgba(10, 6, 18, 0.9);
+
+  /* 特效变量 */
+  --text-glow: 0 0 10px rgba(179, 102, 255, 0.4);
+  --box-glow: 0 0 20px rgba(123, 66, 255, 0.2);
+  --bg-pattern: 
+    radial-gradient(circle at center, transparent 0%, #0a0612 100%),
+    linear-gradient(rgba(123, 66, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(123, 66, 255, 0.03) 1px, transparent 1px);
+  --bg-pattern-size: 100% 100%, 50px 50px, 50px 50px;
+}
+
+/* 霓虹复古主题 (Neon Retro) */
+html[data-theme="neon"] {
+  --bg-color: #12020e;
+  --bg-item: rgba(43, 10, 36, 0.8);
+  --bg-item-hover: rgba(0, 255, 204, 0.15);
+  --border-color: #ff0099;
+  --text-color: #00ffcc;
+  --text-dim: #ff99cc; /* 提亮: 亮粉色 */
+  --grid-line: rgba(255, 0, 153, 0.2);
+  --accent-color: #ff00cc;
+  --modal-bg: rgba(33, 6, 27, 0.95);
+  --dot-color: #66003d;
+  --dot-active: #ff0099;
+  --el-mask-color: rgba(18, 2, 14, 0.9);
+
+  /* 特效变量 */
+  --text-glow: 0 0 5px #00ffcc, 0 0 10px #ff00cc;
+  --box-glow: 0 0 15px rgba(255, 0, 153, 0.4);
+  --bg-pattern: 
+    linear-gradient(transparent 95%, rgba(255, 0, 153, 0.3) 95%),
+    linear-gradient(90deg, transparent 95%, rgba(0, 255, 204, 0.1) 95%);
+  --bg-pattern-size: 40px 40px;
+}
+
 /* Element Plus 暗色主题覆盖 */
 html[data-theme="dark"],
+html[data-theme="cyberpunk"],
+html[data-theme="scifi"],
+html[data-theme="space"],
+html[data-theme="neon"],
 html:not([data-theme]) {
   --el-bg-color: var(--bg-color);
   --el-bg-color-overlay: var(--modal-bg);
@@ -60,6 +160,10 @@ html, body, #app {
   overflow: hidden;
   background-color: transparent;
   font-family: 'Segoe UI', 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, sans-serif;
+  /* 字体抗锯齿：让深色背景下的文字更锐利清晰 */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 /* Element Plus 对话框样式覆盖 */
@@ -229,4 +333,103 @@ html, body, #app {
 ::selection {
   background: var(--accent-color);
   color: #fff;
+}
+
+/* === 主窗口组件的高级主题适配 (ToolGrid & Main UI) === */
+
+/* 1. 科技主题下的网格卡片 (Grid Items) */
+html[data-theme="cyberpunk"] .grid-item,
+html[data-theme="scifi"] .grid-item,
+html[data-theme="space"] .grid-item,
+html[data-theme="neon"] .grid-item {
+  background: rgba(255, 255, 255, 0.02); /* 极低透明度背景 */
+  border: 1px solid transparent;
+  margin: 2px; /* 增加间距 */
+  border-radius: 4px;
+  /* 移除默认的背景色填充，改用透明+边框 */
+}
+
+/* 悬停效果 */
+html[data-theme="cyberpunk"] .grid-item:hover:not(.empty),
+html[data-theme="scifi"] .grid-item:hover:not(.empty),
+html[data-theme="space"] .grid-item:hover:not(.empty),
+html[data-theme="neon"] .grid-item:hover:not(.empty) {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--accent-color);
+  box-shadow: 0 0 10px var(--accent-color), inset 0 0 5px var(--accent-color);
+  transform: translateY(-1px) scale(1.02);
+  z-index: 10;
+}
+
+/* 图标发光 */
+html[data-theme="cyberpunk"] .item-icon,
+html[data-theme="scifi"] .item-icon,
+html[data-theme="space"] .item-icon,
+html[data-theme="neon"] .item-icon {
+  filter: drop-shadow(0 0 2px var(--accent-color));
+}
+
+html[data-theme="cyberpunk"] .grid-item:hover .item-icon,
+html[data-theme="scifi"] .grid-item:hover .item-icon,
+html[data-theme="space"] .grid-item:hover .item-icon,
+html[data-theme="neon"] .grid-item:hover .item-icon {
+  filter: drop-shadow(0 0 5px var(--accent-color));
+}
+
+/* 2. 科技主题下的标题栏 (Section Header) */
+html[data-theme="cyberpunk"] .section-header,
+html[data-theme="scifi"] .section-header,
+html[data-theme="space"] .section-header,
+html[data-theme="neon"] .section-header {
+  background: linear-gradient(90deg, rgba(255,255,255,0.05) 0%, transparent 100%);
+  border-left: 3px solid var(--accent-color);
+  border-bottom: none;
+  margin-top: 4px;
+}
+
+html[data-theme="cyberpunk"] .section-title,
+html[data-theme="scifi"] .section-title,
+html[data-theme="space"] .section-title,
+html[data-theme="neon"] .section-title {
+  color: var(--accent-color);
+  text-shadow: 0 0 5px var(--accent-color);
+  font-family: 'Consolas', monospace; /* 科技感字体 */
+  text-transform: uppercase;
+}
+
+/* 3. 科技主题下的分页点 (Pagination) */
+html[data-theme="cyberpunk"] .page-dot.active,
+html[data-theme="scifi"] .page-dot.active,
+html[data-theme="space"] .page-dot.active,
+html[data-theme="neon"] .page-dot.active {
+  box-shadow: 0 0 5px var(--accent-color);
+}
+
+/* 4. 网格容器边框 (Grid Box) */
+html[data-theme="cyberpunk"] .grid-box,
+html[data-theme="scifi"] .grid-box,
+html[data-theme="space"] .grid-box,
+html[data-theme="neon"] .grid-box {
+  background: transparent; /* 去除网格线背景 */
+  gap: 0; /* 让 margin 生效 */
+}
+
+/* 5. 顶部标题栏增强 */
+html[data-theme="cyberpunk"] .title-bar,
+html[data-theme="scifi"] .title-bar,
+html[data-theme="space"] .title-bar,
+html[data-theme="neon"] .title-bar {
+  background: rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(5px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+html[data-theme="cyberpunk"] .app-title,
+html[data-theme="scifi"] .app-title,
+html[data-theme="space"] .app-title,
+html[data-theme="neon"] .app-title {
+  color: var(--text-color);
+  text-shadow: 0 0 8px var(--accent-color);
+  font-weight: 800;
+  letter-spacing: 1px;
 }

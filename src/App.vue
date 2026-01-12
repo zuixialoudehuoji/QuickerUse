@@ -16,6 +16,7 @@
     :center-x="radialMenuX"
     :center-y="radialMenuY"
     :theme="radialMenuTheme"
+    :style-type="radialMenuStyle"
     :show-hints="radialMenuShowHints"
     :radius="radialMenuRadius"
     :layers="radialMenuLayers"
@@ -28,12 +29,15 @@
   <div
     v-else
     class="quicker-use-app"
-    @dragover.prevent
+    @dragover.prevent="handleDragOver"
     @drop.prevent="handleDrop"
     @mousedown.capture="handleRightMouseDown"
     @mouseup.capture="handleRightMouseUp"
     @contextmenu.prevent
   >
+    <!-- 背景纹理层 -->
+    <div class="app-bg-pattern"></div>
+
     <!-- 顶部标题栏 (可拖动) -->
     <div class="title-bar" style="-webkit-app-region: drag;">
       <span class="app-title">QuickerUse</span>
@@ -127,11 +131,9 @@
     <ManageFeaturesModal
       v-model="showManageFeatures"
       :blacklist="smartBlacklist"
-      :hotkeys="smartHotkeys"
       @feature-click="handleSmartClick"
       @hide-feature="hideSmartFeature"
       @restore-feature="restoreSmartFeature"
-      @hotkeys-change="handleHotkeysChange"
     />
 
     <!-- 设置弹窗 -->
@@ -141,7 +143,6 @@
       :hotkeys="smartHotkeys"
       @settings-change="handleSettingsChange"
       @hotkeys-change="handleHotkeysChange"
-      @reset-tools="resetCustomActions"
       @reset-all="resetAllSettings"
       @radial-settings-change="handleRadialSettingsChange"
     />
@@ -262,6 +263,7 @@ const isDialogMode = ref(urlParams.get('dialogType') !== null);
 const isMainWindow = ref(!isRadialMenuMode.value && !isDialogMode.value);
 const radialMenuVisible = ref(false);
 const radialMenuTheme = ref('dark');
+const radialMenuStyle = ref('default');
 const radialMenuShowHints = ref(true);
 const radialMenuRadius = ref(120); // 轮盘半径
 const radialMenuLayers = ref(2);   // 轮盘层数
@@ -399,6 +401,12 @@ const handleSmartClick = (item) => {
     const service = settings.translateService || 'google';
     let url = TRANSLATE_SERVICES[service].replace('{text}', encodeURIComponent(rawText.trim()));
     window.api?.send('run-path', url);
+    window.api?.send('hide-window');
+  }
+  // 打开链接
+  else if (action === 'open-url') {
+    if (!rawText.trim()) return ElMessage.warning('无链接可打开');
+    window.api?.send('run-path', rawText.trim());
     window.api?.send('hide-window');
   }
   // JSON处理
@@ -749,11 +757,30 @@ const addCustomTool = (tool) => {
   saveData();
 };
 
+// 文件拖拽悬停处理 - 设置 dropEffect 以显示正确的鼠标图标
+const handleDragOver = (e) => {
+  if (e.dataTransfer) {
+    e.dataTransfer.dropEffect = 'copy';
+  }
+};
+
 // 文件拖拽处理
 const handleDrop = async (e) => {
   if (e.dataTransfer?.files?.length > 0) {
     const file = e.dataTransfer.files[0];
-    const filePath = file.path || file.name;
+    // 获取文件路径：优先使用 Electron API，回退到 file.path 或 file.name
+    let filePath = file.name;
+    try {
+      if (window.api && typeof window.api.getPathForFile === 'function') {
+        filePath = window.api.getPathForFile(file);
+      } else if (file.path) {
+        filePath = file.path;
+      }
+    } catch (err) {
+      console.warn('[App] getPathForFile failed:', err);
+      filePath = file.path || file.name;
+    }
+
     const ext = filePath.split('.').pop().toLowerCase();
 
     // 可执行文件 -> 添加到工具
@@ -786,6 +813,12 @@ const handleSettingsChange = (newSettings) => {
   Object.assign(settings, newSettings);
   applySettings();
   saveData();
+  
+  // 关键修复：立即同步视觉设置到主进程，确保轮盘菜单能读取到最新样式
+  if (window.api) {
+    window.api.send('config-action', { action: 'set', key: 'theme', value: settings.theme });
+    window.api.send('config-action', { action: 'set', key: 'radialStyle', value: settings.radialStyle });
+  }
 };
 
 const handleHotkeysChange = (newHotkeys) => {
@@ -794,15 +827,45 @@ const handleHotkeysChange = (newHotkeys) => {
   window.api?.send('update-smart-hotkeys', JSON.parse(JSON.stringify(smartHotkeys)));
 };
 
-const resetCustomActions = () => {
-  customActions.value = [];
-  saveData();
-};
-
+// 重置所有设置和自定义配置
 const resetAllSettings = () => {
+  // 1. 恢复默认设置
   Object.assign(settings, DEFAULT_SETTINGS);
+
+  // 2. 清空自定义工具
+  customActions.value = [];
+
+  // 3. 清空快捷键配置
+  Object.keys(smartHotkeys).forEach(key => delete smartHotkeys[key]);
+
+  // 4. 清空功能排序
+  smartOrder.value = [];
+
+  // 5. 清空隐藏的功能
+  smartBlacklist.value = new Set();
+
+  // 6. 清空轮盘菜单配置
+  localStorage.removeItem('radial-menu-settings');
+
+  // 7. 清空环境感知自定义规则
+  localStorage.removeItem('env-custom-rules');
+
+  // 8. 清空 AI 配置
+  localStorage.removeItem('ai-config');
+
+  // 9. 清空保存的密钥（通过主进程）
+  window.api?.send('secret-action', { action: 'clear-all' });
+
+  // 应用设置并保存
   applySettings();
   saveData();
+
+  // 通知主进程更新（清空所有快捷键）
+  window.api?.send('update-smart-hotkeys', {});
+  window.api?.send('update-custom-hotkeys', {});  // 清空自定义工具快捷键
+  window.api?.send('update-radial-menu-settings', null);
+
+  console.log('[App] All settings have been reset');
 };
 
 // 轮盘菜单设置变更
@@ -977,22 +1040,47 @@ onMounted(() => {
     console.log('[App] Running in Radial Menu Mode');
     // 轮盘菜单模式下，监听初始化事件
     if (window.api) {
+      // 预加载设置（提前接收，不显示）
+      window.api.on('radial-menu-preload-settings', (settings) => {
+        console.log('[App] Radial menu preload settings received');
+        if (settings) {
+          radialMenuTheme.value = settings.theme || 'dark';
+          document.documentElement.setAttribute('data-theme', radialMenuTheme.value);
+          radialMenuStyle.value = settings.radialStyle || 'default';
+          radialMenuShowHints.value = settings.showHints !== false;
+          radialMenuRadius.value = settings.radius || 120;
+          radialMenuLayers.value = settings.layers || 2;
+          globalRadialMenuSlots.value = settings.slots || [];
+          globalRadialMenuItems.value = settings.menuItems || [];
+          globalQuickSlots.value = settings.quickSlots || [];
+          console.log('[App] Preloaded settings applied');
+        }
+      });
+
+      // 快速显示（只接收坐标）
+      window.api.on('radial-menu-show', (data) => {
+        console.log('[App] Radial menu show at:', data.centerX, data.centerY);
+        radialMenuX.value = data.centerX || window.innerWidth / 2;
+        radialMenuY.value = data.centerY || window.innerHeight / 2;
+        radialMenuVisible.value = true;
+      });
+
+      // 兼容旧的初始化事件（首次使用或预加载未就绪时）
       window.api.on('radial-menu-init', (data) => {
-        console.log('[App] Radial menu init:', data);
+        console.log('[App] Radial menu init (fallback):', data);
         radialMenuX.value = data.centerX || window.innerWidth / 2;
         radialMenuY.value = data.centerY || window.innerHeight / 2;
 
         // 加载设置
         if (data.settings) {
-          // 轮盘主题与主窗口主题保持一致
-          radialMenuTheme.value = settings.theme === 'light' ? 'light' : 'dark';
+          radialMenuTheme.value = data.settings.theme || 'dark';
+          document.documentElement.setAttribute('data-theme', radialMenuTheme.value);
+          radialMenuStyle.value = data.settings.radialStyle || 'default';
           radialMenuShowHints.value = data.settings.showHints !== false;
           radialMenuRadius.value = data.settings.radius || 120;
           radialMenuLayers.value = data.settings.layers || 2;
-          // 优先使用 slots 格式，兼容 menuItems 格式
           globalRadialMenuSlots.value = data.settings.slots || [];
           globalRadialMenuItems.value = data.settings.menuItems || [];
-          // 加载数字键功能配置
           globalQuickSlots.value = data.settings.quickSlots || [];
           console.log('[App] Radial menu settings:', {
             radius: radialMenuRadius.value,
@@ -1031,6 +1119,12 @@ onMounted(() => {
   }
 
   applySettings();
+
+  // 启动时同步视觉设置到主进程
+  if (window.api) {
+    window.api.send('config-action', { action: 'set', key: 'theme', value: settings.theme });
+    window.api.send('config-action', { action: 'set', key: 'radialStyle', value: settings.radialStyle });
+  }
 
   // 加载轮盘菜单设置
   try {
@@ -1118,6 +1212,19 @@ onMounted(() => {
       }
     });
 
+    // 快捷键注册失败提示
+    window.api.on('hotkey-register-failed', (failedHotkeys) => {
+      console.log('[App] Hotkey registration failed:', failedHotkeys);
+      if (failedHotkeys && failedHotkeys.length > 0) {
+        const messages = failedHotkeys.map(h => `${h.label}: ${h.hotkey} (${h.reason})`).join('\n');
+        ElMessage.warning({
+          message: `以下快捷键注册失败：\n${failedHotkeys.map(h => `${h.hotkey} - ${h.label}`).join('、')}`,
+          duration: 5000,
+          showClose: true
+        });
+      }
+    });
+
     window.api.send('update-global-hotkey', settings.globalHotkey);
     window.api.send('update-smart-hotkeys', JSON.parse(JSON.stringify(smartHotkeys)));
 
@@ -1143,6 +1250,25 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   transition: opacity 0.2s;
+  position: relative; /* For absolute background */
+}
+
+.app-bg-pattern {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  background-image: var(--bg-pattern, none);
+  background-size: var(--bg-pattern-size, auto);
+  opacity: 0.4;
+  z-index: 0;
+}
+
+.quicker-use-app > *:not(.app-bg-pattern) {
+  position: relative;
+  z-index: 1;
 }
 
 .quicker-use-app::-webkit-scrollbar {

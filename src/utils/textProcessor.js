@@ -17,77 +17,65 @@ export default {
     const trimmedText = text.trim();
 
     // --- 1. 基础通用功能 ---
-    
+
     // 默认浏览器搜索 (总是显示，除非内容过长)
     if (trimmedText.length < 100) {
-      actions.push({ label: '🔍 搜索', action: 'search-google', payload: trimmedText });
-      actions.push({ label: '🇨🇳 百度搜索', action: 'search-baidu', payload: trimmedText });
+      actions.push({ label: '搜索', action: 'search-google', payload: trimmedText });
     }
 
     // 翻译 (总是显示)
-    actions.push({ label: '🌍 翻译', action: 'translate', payload: trimmedText });
+    actions.push({ label: '翻译', action: 'translate', payload: trimmedText });
 
     // --- 2. 格式识别 ---
 
     // 识别 URL
     if (this.isUrl(trimmedText)) {
-      actions.push({ label: '🚀 打开链接', action: 'open-url', payload: trimmedText });
-      actions.push({ label: '📷 转二维码', action: 'generate-qr', payload: trimmedText });
-      actions.push({ label: '📡 API 调试 (GET)', action: 'api-get', payload: trimmedText });
+      actions.push({ label: '打开链接', action: 'open-url', payload: trimmedText });
+      actions.push({ label: '转二维码', action: 'generate-qr', payload: trimmedText });
     }
 
     // 识别 JSON (以 { 或 [ 开头，且能解析)
     if (this.isJson(trimmedText)) {
-      actions.push({ label: '📄 格式化 JSON', action: 'json-format', payload: trimmedText });
-      actions.push({ label: '📦 压缩 JSON', action: 'json-minify', payload: trimmedText });
+      actions.push({ label: '格式化 JSON', action: 'json-format', payload: trimmedText });
     }
 
-    // 识别多行文本 (用于 SQL 助手)
+    // 识别多行文本 (用于 SQL 助手，智能拼接功能已整合到 SQL IN 中)
     if (this.isMultiLine(trimmedText)) {
-      actions.push({ label: '⚡ 转 SQL IN', action: 'sql-in', payload: trimmedText });
-      actions.push({ label: '🔗 智能拼接 (,)', action: 'join-comma', payload: trimmedText });
-      actions.push({ label: '✂️ 拆分多行', action: 'split-lines', payload: trimmedText });
+      actions.push({ label: '转 SQL IN', action: 'sql-in', payload: trimmedText });
     }
 
     // 识别简单的变量名 (驼峰/下划线转换)
     if (this.isVariable(trimmedText)) {
-      actions.push({ label: '🐫 转驼峰命名', action: 'to-camel', payload: trimmedText });
-      actions.push({ label: '➖ 转下划线命名', action: 'to-snake', payload: trimmedText });
-    }
-
-    // 识别图片 (Base64) - 简单判断
-    if (trimmedText.startsWith('data:image/')) {
-      actions.push({ label: '🖼️ 显示图片', action: 'show-image', payload: trimmedText });
-      actions.push({ label: '💾 保存为文件', action: 'save-image', payload: trimmedText });
+      actions.push({ label: '变量命名', action: 'to-camel', payload: trimmedText });
     }
 
     // --- 3. 正则提取 ---
     const ips = this.extractIps(text);
     if (ips.length > 0) {
-      actions.push({ label: `🔍 提取 ${ips.length} 个 IP`, action: 'extract-ip', payload: ips.join('\n') });
+      actions.push({ label: `提取 ${ips.length} 个 IP`, action: 'extract-info', payload: ips.join('\n') });
     }
 
     const emails = this.extractEmails(text);
     if (emails.length > 0) {
-      actions.push({ label: `📧 提取 ${emails.length} 个邮箱`, action: 'extract-email', payload: emails.join('\n') });
+      actions.push({ label: `提取 ${emails.length} 个邮箱`, action: 'extract-info', payload: emails.join('\n') });
     }
 
     // 提取手机号
     const phones = this.extractPhones(text);
     if (phones.length > 0) {
-      actions.push({ label: `📱 提取 ${phones.length} 个号码`, action: 'extract-phone', payload: phones.join('\n') });
+      actions.push({ label: `提取 ${phones.length} 个号码`, action: 'extract-info', payload: phones.join('\n') });
     }
 
     // --- 4. 时间戳识别 ---
     if (this.isTimestamp(trimmedText)) {
-      actions.push({ label: '⏰ 转为日期时间', action: 'timestamp-convert', payload: trimmedText });
+      actions.push({ label: '转为日期时间', action: 'timestamp-convert', payload: trimmedText });
     } else if (this.isDateString(trimmedText)) {
-      actions.push({ label: '📅 转为时间戳', action: 'to-timestamp', payload: trimmedText });
+      actions.push({ label: '转为时间戳', action: 'timestamp-convert', payload: trimmedText });
     }
 
-    // --- 6. YAML 识别 (简易) ---
+    // --- 5. YAML 识别 (简易) ---
     if (this.isYaml(trimmedText)) {
-      actions.push({ label: '📋 YAML 处理', action: 'yaml-format', payload: trimmedText });
+      actions.push({ label: 'YAML 处理', action: 'yaml-format', payload: trimmedText });
     }
 
     return actions;

@@ -245,5 +245,92 @@ export default {
   /** 初始化 */
   init() {
     ensureLoaded();
+  },
+
+  /**
+   * 导出密钥（使用 PIN 加密）
+   * @param {string} pin - 用于加密的 PIN 码
+   * @returns {object} 加密后的密钥数据
+   */
+  exportSecrets(pin) {
+    ensureLoaded();
+    if (Object.keys(secretsCache).length === 0) {
+      return { secrets: {}, hasSecrets: false };
+    }
+    // 使用 PIN 派生加密密钥
+    const exportKey = crypto.createHash('sha256').update(pin + '_export_key').digest();
+    const encryptedSecrets = {};
+    for (const [key, value] of Object.entries(secretsCache)) {
+      try {
+        const iv = crypto.randomBytes(16);
+        const cipher = crypto.createCipheriv('aes-256-cbc', exportKey, iv);
+        let encrypted = cipher.update(value, 'utf8', 'hex');
+        encrypted += cipher.final('hex');
+        encryptedSecrets[key] = iv.toString('hex') + ':' + encrypted;
+      } catch (e) {
+        console.error(`导出密钥 [${key}] 失败:`, e.message);
+      }
+    }
+    return { secrets: encryptedSecrets, hasSecrets: true };
+  },
+
+  /**
+   * 导入密钥（使用 PIN 解密）
+   * @param {object} encryptedSecrets - 加密的密钥数据
+   * @param {string} pin - 用于解密的 PIN 码
+   * @returns {boolean} 是否导入成功
+   */
+  importSecrets(encryptedSecrets, pin) {
+    ensureLoaded();
+    if (!encryptedSecrets || Object.keys(encryptedSecrets).length === 0) {
+      return true;
+    }
+    // 使用 PIN 派生解密密钥
+    const exportKey = crypto.createHash('sha256').update(pin + '_export_key').digest();
+    let importedCount = 0;
+    for (const [key, encryptedValue] of Object.entries(encryptedSecrets)) {
+      try {
+        const [ivHex, encrypted] = encryptedValue.split(':');
+        const iv = Buffer.from(ivHex, 'hex');
+        const decipher = crypto.createDecipheriv('aes-256-cbc', exportKey, iv);
+        let decrypted = decipher.update(encrypted, 'hex', 'utf8');
+        decrypted += decipher.final('utf8');
+        secretsCache[key] = decrypted;
+        importedCount++;
+      } catch (e) {
+        console.error(`导入密钥 [${key}] 失败:`, e.message);
+        return false; // PIN 错误会导致解密失败
+      }
+    }
+    if (importedCount > 0) {
+      saveSecrets();
+    }
+    console.log(`[SecretManager] 成功导入 ${importedCount} 个密钥`);
+    return true;
+  },
+
+  /**
+   * 清除所有密钥（用于重置功能）
+   * @returns {boolean} 是否清除成功
+   */
+  clearAll() {
+    ensureLoaded();
+    secretsCache = {};
+    clearAuth();
+    // 删除密钥文件
+    try {
+      if (fs.existsSync(SECRETS_FILE)) {
+        fs.unlinkSync(SECRETS_FILE);
+      }
+      // 也删除 PIN 文件
+      if (fs.existsSync(APP_PIN_FILE)) {
+        fs.unlinkSync(APP_PIN_FILE);
+      }
+      console.log('[SecretManager] 所有密钥已清除');
+      return true;
+    } catch (e) {
+      console.error('[SecretManager] 清除密钥失败:', e);
+      return false;
+    }
   }
 };

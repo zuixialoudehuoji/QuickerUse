@@ -72,18 +72,15 @@
           <template v-for="sector in sectorCount" :key="'picon-'+sector">
             <div v-if="getSlotData(sector - 1, 0)" class="preview-icon-wrapper" :style="getPreviewIconStyle(sector - 1, 0)">
               <img v-if="getSlotImgIcon(sector - 1, 0)" :src="getSlotImgIcon(sector - 1, 0)" class="preview-img-icon" />
-              <el-icon v-else-if="getSlotElIcon(sector - 1, 0)" :size="14"><component :is="getSlotElIcon(sector - 1, 0)" /></el-icon>
-              <span v-else class="preview-fallback-icon">{{ getSlotIcon(sector - 1, 0) }}</span>
+              <el-icon v-else :size="14"><component :is="getSlotElIcon(sector - 1, 0)" /></el-icon>
             </div>
             <div v-if="settings.layers >= 2 && getSlotData(sector - 1, 1)" class="preview-icon-wrapper" :style="getPreviewIconStyle(sector - 1, 1)">
               <img v-if="getSlotImgIcon(sector - 1, 1)" :src="getSlotImgIcon(sector - 1, 1)" class="preview-img-icon" style="width: 12px; height: 12px;" />
-              <el-icon v-else-if="getSlotElIcon(sector - 1, 1)" :size="12"><component :is="getSlotElIcon(sector - 1, 1)" /></el-icon>
-              <span v-else class="preview-fallback-icon" style="font-size: 10px;">{{ getSlotIcon(sector - 1, 1) }}</span>
+              <el-icon v-else :size="12"><component :is="getSlotElIcon(sector - 1, 1)" /></el-icon>
             </div>
             <div v-if="settings.layers === 3 && getSlotData(sector - 1, 2)" class="preview-icon-wrapper" :style="getPreviewIconStyle(sector - 1, 2)">
               <img v-if="getSlotImgIcon(sector - 1, 2)" :src="getSlotImgIcon(sector - 1, 2)" class="preview-img-icon" style="width: 10px; height: 10px;" />
-              <el-icon v-else-if="getSlotElIcon(sector - 1, 2)" :size="10"><component :is="getSlotElIcon(sector - 1, 2)" /></el-icon>
-              <span v-else class="preview-fallback-icon" style="font-size: 8px;">{{ getSlotIcon(sector - 1, 2) }}</span>
+              <el-icon v-else :size="10"><component :is="getSlotElIcon(sector - 1, 2)" /></el-icon>
             </div>
           </template>
         </div>
@@ -137,7 +134,8 @@
           :class="{ active: selectedQuickSlot === idx, empty: !action }"
           @click="selectQuickSlot(idx)">
           <span class="quick-number">{{ idx + 1 }}</span>
-          <span v-if="action" class="quick-icon">{{ action.icon }}</span>
+          <el-icon v-if="action && action.elIcon" class="quick-el-icon"><component :is="ElementPlusIcons[action.elIcon]" /></el-icon>
+          <img v-else-if="action && action.imgIcon" :src="action.imgIcon" class="quick-img-icon" />
           <span v-else class="quick-icon empty-icon">+</span>
           <span class="quick-label">{{ action?.label || '空' }}</span>
         </div>
@@ -159,7 +157,7 @@
             :class="{ active: quickSlots[selectedQuickSlot]?.action === action.value }"
             @click="setQuickSlotAction(action)">
             <el-icon v-if="action.elIcon" class="action-el-icon"><component :is="action.elIcon" /></el-icon>
-            <span v-else class="action-emoji">{{ action.icon }}</span>
+            <el-icon v-else class="action-el-icon"><component :is="ElementPlusIcons.Document" /></el-icon>
             <span class="action-label">{{ action.label }}</span>
           </div>
         </div>
@@ -187,7 +185,7 @@
           <div v-for="action in defaultSystemActions" :key="action.value" class="action-item"
             :class="{ active: quickSlots[selectedQuickSlot]?.action === action.value }"
             @click="setQuickSlotAction(action)">
-            <span class="action-emoji">{{ action.icon }}</span>
+            <el-icon v-if="action.elIcon" class="action-el-icon"><component :is="ElementPlusIcons[action.elIcon]" /></el-icon>
             <span class="action-label">{{ action.label }}</span>
           </div>
         </div>
@@ -235,25 +233,28 @@ const settings = reactive({
 const selectedSlot = ref(null)
 const selectedQuickSlot = ref(null)
 
-// 数字键快捷功能配置（8个位置）
+// 数字键快捷功能配置（8个位置）- 默认8个系统功能
 const quickSlots = ref([
-  { icon: '🔒', label: '锁屏', action: 'lock-screen' },
-  { icon: '💻', label: '我的电脑', action: 'open-explorer' },
-  { icon: '📥', label: '显示桌面', action: 'minimize-all' },
-  { icon: '📁', label: 'Hosts', action: 'switch-hosts' },
-  { icon: '🎯', label: '取色', action: 'pick-color' },
-  { icon: '📋', label: '注册表', action: 'open-regedit' },
-  { icon: '⏳', label: '倒计时', action: 'timer' },
-  { icon: '💡', label: '闪念', action: 'memo' }
+  { elIcon: 'Lock', label: '锁屏', action: 'lock-screen' },
+  { elIcon: 'Monitor', label: '我的电脑', action: 'open-explorer' },
+  { elIcon: 'Fold', label: '显示桌面', action: 'minimize-all' },
+  { elIcon: 'FolderOpened', label: 'Hosts', action: 'switch-hosts' },
+  { elIcon: 'SetUp', label: '注册表', action: 'open-regedit' },
+  { elIcon: 'Setting', label: '环境变量', action: 'open-env-vars' },
+  { elIcon: 'Delete', label: '程序卸载', action: 'open-uninstall' },
+  { elIcon: 'Connection', label: '网络设置', action: 'open-network-settings' }
 ])
 
-// 默认系统功能列表（供选择）
+// 默认系统功能列表（供选择）- 使用 Element Plus 图标
 const defaultSystemActions = [
-  { icon: '🔒', label: '锁屏', value: 'lock-screen' },
-  { icon: '💻', label: '我的电脑', value: 'open-explorer' },
-  { icon: '📥', label: '显示桌面', value: 'minimize-all' },
-  { icon: '📁', label: 'Hosts', value: 'switch-hosts' },
-  { icon: '📋', label: '注册表', value: 'open-regedit' }
+  { elIcon: 'Lock', label: '锁屏', value: 'lock-screen' },
+  { elIcon: 'Monitor', label: '我的电脑', value: 'open-explorer' },
+  { elIcon: 'Fold', label: '显示桌面', value: 'minimize-all' },
+  { elIcon: 'FolderOpened', label: 'Hosts', value: 'switch-hosts' },
+  { elIcon: 'SetUp', label: '注册表', value: 'open-regedit' },
+  { elIcon: 'Setting', label: '环境变量', value: 'open-env-vars' },
+  { elIcon: 'Delete', label: '程序卸载', value: 'open-uninstall' },
+  { elIcon: 'Connection', label: '网络设置', value: 'open-network-settings' },
 ]
 
 const displayOuterRadius = computed(() => Math.round(100 * settings.radius / 200))
@@ -263,24 +264,14 @@ const displayCenterRadius = computed(() => Math.round(20 * settings.radius / 200
 
 const formatRadius = (val) => `${val}px`
 
-// emoji 图标映射（备用）
-const emojiMap = {
-  'search-google': '🌐', 'translate': '🌍', 'sql-in': '📊', 'json-format': '📋',
-  'yaml-format': '📄', 'timestamp-convert': '⏰', 'to-camel': '🔤', 'regex-helper': '📝',
-  'color-convert': '🎨', 'extract-info': '🔍', 'generate-qr': '📱', 'memo': '💡',
-  'clipboard-history': '📎', 'cron-helper': '⏱️', 'generate-uuid': '🔑', 'generate-password': '🔐',
-  'color-picker': '🎯', 'pick-color': '🎯', 'timer': '⏳', 'calculator': '🔢',
-  'encoder': '🔤', 'markdown-preview': '📄', 'ocr': '👁️', 'ai-assistant': '🤖'
-}
-
 // 智能推荐功能 - 统一使用 Element Plus 图标
 const smartActions = computed(() => {
   return ALL_FEATURES.map(f => {
     const iconName = FEATURE_ICONS[f.action]
     const elIcon = iconName && ElementPlusIcons[iconName] ? ElementPlusIcons[iconName] : null
     return {
-      icon: emojiMap[f.action] || '⚡',
       elIcon,
+      elIconName: iconName,
       label: f.label,
       value: f.action
     }
@@ -364,12 +355,15 @@ const selectQuickSlot = (idx) => {
 // 设置数字键功能
 const setQuickSlotAction = (action) => {
   if (selectedQuickSlot.value === null) return
+  // 获取 Element Plus 图标名称
+  const elIconName = action.elIconName || action.elIcon || FEATURE_ICONS[action.value] || 'Document'
   quickSlots.value[selectedQuickSlot.value] = {
-    icon: action.icon || emojiMap[action.value] || '⚡',
+    elIcon: elIconName,
     label: action.label,
     action: action.value,
     path: action.path,
-    type: action.type
+    type: action.type,
+    imgIcon: action.imgIcon
   }
 }
 
@@ -379,25 +373,21 @@ const clearQuickSlot = () => {
   quickSlots.value[selectedQuickSlot.value] = null
 }
 
-// 获取槽位显示的图标（emoji）
-const getSlotIcon = (sector, layer) => {
-  const data = getSlotData(sector, layer)
-  if (!data) return ''
-  // 优先使用 emoji
-  if (data.icon && data.icon.length <= 2) return data.icon
-  // 否则使用映射
-  return emojiMap[data.action] || '⚡'
-}
-
 // 获取槽位的 Element Plus 图标组件
 const getSlotElIcon = (sector, layer) => {
   const data = getSlotData(sector, layer)
   if (!data || !data.action) return null
+  // 优先使用保存的 elIcon
+  if (data.elIcon && ElementPlusIcons[data.elIcon]) {
+    return ElementPlusIcons[data.elIcon]
+  }
+  // 其次使用 FEATURE_ICONS 映射
   const iconName = FEATURE_ICONS[data.action]
   if (iconName && ElementPlusIcons[iconName]) {
     return ElementPlusIcons[iconName]
   }
-  return null
+  // 默认图标
+  return ElementPlusIcons.Document
 }
 
 // 获取槽位的图片图标（用户自定义工具）
@@ -485,35 +475,36 @@ const clearAll = () => {
   ElMessage.success('已清空所有配置')
 }
 
+// 预设配置 - 使用 action 字段，图标通过 FEATURE_ICONS 映射获取
 const presets = {
   default: [
-    [{ icon: '📋', label: 'JSON', action: 'json-format' }, { icon: '🔍', label: '提取', action: 'extract-info' }, null],
-    [{ icon: '⏰', label: '时间戳', action: 'timestamp-convert' }, { icon: '🔢', label: '计算器', action: 'calculator' }, null],
-    [{ icon: '🤖', label: 'AI', action: 'ai-assistant' }, { icon: '📎', label: '剪贴板', action: 'clipboard-history' }, null],
-    [{ icon: '🎨', label: '颜色', action: 'color-convert' }, { icon: '🎯', label: '取色', action: 'pick-color' }, null],
-    [{ icon: '📱', label: '二维码', action: 'generate-qr' }, { icon: '👁️', label: 'OCR', action: 'ocr' }, null],
-    [{ icon: '🔑', label: 'UUID', action: 'generate-uuid' }, { icon: '🔐', label: '密码', action: 'generate-password' }, null],
-    [{ icon: '🌐', label: '搜索', action: 'search-google' }, { icon: '🌍', label: '翻译', action: 'translate' }, null],
-    [{ icon: '⏳', label: '倒计时', action: 'timer' }, { icon: '💡', label: '闪念', action: 'memo' }, null]
+    [{ label: 'JSON', action: 'json-format' }, { label: '提取', action: 'extract-info' }, null],
+    [{ label: '时间戳', action: 'timestamp-convert' }, { label: '计算器', action: 'calculator' }, null],
+    [{ label: 'AI', action: 'ai-assistant' }, { label: '剪贴板', action: 'clipboard-history' }, null],
+    [{ label: '颜色', action: 'color-convert' }, { label: '取色', action: 'pick-color' }, null],
+    [{ label: '二维码', action: 'generate-qr' }, { label: 'OCR', action: 'ocr' }, null],
+    [{ label: 'UUID', action: 'generate-uuid' }, { label: '密码', action: 'generate-password' }, null],
+    [{ label: '搜索', action: 'search-google' }, { label: '翻译', action: 'translate' }, null],
+    [{ label: '倒计时', action: 'timer' }, { label: '闪念', action: 'memo' }, null]
   ],
   dev: [
-    [{ icon: '📋', label: 'JSON', action: 'json-format' }, null, null],
-    [{ icon: '⏰', label: '时间戳', action: 'timestamp-convert' }, null, null],
-    [{ icon: '🔤', label: '编码', action: 'encoder' }, null, null],
-    [{ icon: '📝', label: '正则', action: 'regex-helper' }, null, null],
-    [{ icon: '⏱️', label: 'Cron', action: 'cron-helper' }, null, null],
-    [{ icon: '🔑', label: 'UUID', action: 'generate-uuid' }, null, null],
-    [{ icon: '🔐', label: '密码', action: 'generate-password' }, null, null],
-    [{ icon: '🎨', label: '颜色', action: 'color-convert' }, null, null]
+    [{ label: 'JSON', action: 'json-format' }, null, null],
+    [{ label: '时间戳', action: 'timestamp-convert' }, null, null],
+    [{ label: '编码', action: 'encoder' }, null, null],
+    [{ label: '正则', action: 'regex-helper' }, null, null],
+    [{ label: 'Cron', action: 'cron-helper' }, null, null],
+    [{ label: 'UUID', action: 'generate-uuid' }, null, null],
+    [{ label: '密码', action: 'generate-password' }, null, null],
+    [{ label: '颜色', action: 'color-convert' }, null, null]
   ],
   simple: [
-    [{ icon: '📋', label: 'JSON', action: 'json-format' }, null, null],
-    [{ icon: '🤖', label: 'AI', action: 'ai-assistant' }, null, null],
-    [{ icon: '📎', label: '剪贴板', action: 'clipboard-history' }, null, null],
-    [{ icon: '🔢', label: '计算器', action: 'calculator' }, null, null],
+    [{ label: 'JSON', action: 'json-format' }, null, null],
+    [{ label: 'AI', action: 'ai-assistant' }, null, null],
+    [{ label: '剪贴板', action: 'clipboard-history' }, null, null],
+    [{ label: '计算器', action: 'calculator' }, null, null],
     [null, null, null], [null, null, null],
-    [{ icon: '🌐', label: '搜索', action: 'search-google' }, null, null],
-    [{ icon: '🌍', label: '翻译', action: 'translate' }, null, null]
+    [{ label: '搜索', action: 'search-google' }, null, null],
+    [{ label: '翻译', action: 'translate' }, null, null]
   ]
 }
 
@@ -565,9 +556,27 @@ const loadSettings = () => {
       settings.layers = parsed.layers ?? 2
       if (parsed.slots?.length === sectorCount) settings.slots = parsed.slots
       else applyPreset('default')
-      // 加载数字键配置
-      if (parsed.quickSlots?.length === 8) {
-        quickSlots.value = parsed.quickSlots
+      // 加载数字键配置（支持部分配置，用默认值填充空位）
+      if (parsed.quickSlots && Array.isArray(parsed.quickSlots)) {
+        const defaultSlots = [
+          { elIcon: 'Lock', label: '锁屏', action: 'lock-screen' },
+          { elIcon: 'Monitor', label: '我的电脑', action: 'open-explorer' },
+          { elIcon: 'Fold', label: '显示桌面', action: 'minimize-all' },
+          { elIcon: 'FolderOpened', label: 'Hosts', action: 'switch-hosts' },
+          { elIcon: 'SetUp', label: '注册表', action: 'open-regedit' },
+          { elIcon: 'Setting', label: '环境变量', action: 'open-env-vars' },
+          { elIcon: 'Delete', label: '程序卸载', action: 'open-uninstall' },
+          { elIcon: 'Connection', label: '网络设置', action: 'open-network-settings' }
+        ]
+        // 合并保存的配置和默认值
+        for (let i = 0; i < 8; i++) {
+          const slot = parsed.quickSlots[i]
+          if (slot && slot.action) {
+            quickSlots.value[i] = slot
+          } else {
+            quickSlots.value[i] = defaultSlots[i]
+          }
+        }
       }
     } else applyPreset('default')
   } catch (e) {
@@ -655,6 +664,8 @@ defineExpose({ settings, saveSettings, loadSettings, refreshCustomActions })
 .quick-number { position: absolute; top: 2px; right: 2px; font-size: 8px; color: #999; background: rgba(0,0,0,0.1); border-radius: 2px; padding: 0 3px; }
 .quick-icon { font-size: 14px; line-height: 1; }
 .quick-icon.empty-icon { color: #ccc; font-size: 16px; }
+.quick-el-icon { font-size: 16px; color: #409eff; line-height: 1; }
+.quick-img-icon { width: 16px; height: 16px; object-fit: contain; border-radius: 2px; }
 .quick-label { font-size: 8px; color: #666; margin-top: 2px; white-space: nowrap; }
 
 /* 数字键配置面板 */

@@ -104,7 +104,7 @@
         }
       ],
       "icon": "resources/icon.png",
-      "requestedExecutionLevel": "requireAdministrator"
+      "requestedExecutionLevel": "asInvoker"
     },
     "nsis": {
       "oneClick": false,
