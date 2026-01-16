@@ -766,6 +766,53 @@ async function createWindow() {
     }
   });
 
+  // Windows: 允许管理员权限下的拖拽（绕过 UIPI）
+  if (process.platform === 'win32') {
+    const hwnd = mainWindow.getNativeWindowHandle();
+    if (hwnd) {
+      try {
+        const { execSync } = require('child_process');
+        const path = require('path');
+        const os = require('os');
+
+        // 获取窗口句柄
+        const hwndInt = hwnd.readBigUInt64LE ? hwnd.readBigUInt64LE(0) : hwnd.readUInt32LE(0);
+
+        // 创建临时 PowerShell 脚本
+        const tempScript = path.join(os.tmpdir(), 'quickeruse-dragdrop.ps1');
+        const psContent = `
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public class DragDropFilter {
+    [DllImport("user32.dll")]
+    public static extern bool ChangeWindowMessageFilterEx(IntPtr hwnd, uint message, uint action, IntPtr changeInfo);
+    public static void Allow(IntPtr hwnd) {
+        ChangeWindowMessageFilterEx(hwnd, 0x233, 1, IntPtr.Zero);
+        ChangeWindowMessageFilterEx(hwnd, 0x004A, 1, IntPtr.Zero);
+        ChangeWindowMessageFilterEx(hwnd, 0x0049, 1, IntPtr.Zero);
+    }
+}
+"@ -Language CSharp
+[DragDropFilter]::Allow([IntPtr]${hwndInt})
+`;
+        fs.writeFileSync(tempScript, psContent, 'utf8');
+
+        execSync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${tempScript}"`, {
+          stdio: 'ignore',
+          windowsHide: true
+        });
+
+        // 清理临时文件
+        try { fs.unlinkSync(tempScript); } catch (e) {}
+
+        console.log('[Main] Drag-drop message filter configured for UIPI bypass');
+      } catch (e) {
+        console.warn('[Main] Failed to configure drag-drop filter:', e.message);
+      }
+    }
+  }
+
   // 忽略证书错误
   app.commandLine.appendSwitch('ignore-certificate-errors');
   mainWindow.webContents.on('certificate-error', (event, url, error, certificate, callback) => {
@@ -1305,7 +1352,14 @@ async function createWindow() {
       radialMenuSettings = settings;
       configManager.set('radialMenuSettings', settings);
     }
-    console.log('[Main] Radial menu settings updated');
+
+    // 刷新缓存并通知预加载窗口
+    updateCachedRadialSettings();
+    if (preloadedRadialWindow && !preloadedRadialWindow.isDestroyed()) {
+      preloadedRadialWindow.webContents.send("radial-menu-preload-settings", cachedRadialInitSettings);
+    }
+
+    console.log('[Main] Radial menu settings updated and cache refreshed');
   });
 
   // 注册轮盘菜单快捷键
@@ -1499,6 +1553,14 @@ async function createWindow() {
     if (args.action === 'set') {
       configManager.set(args.key, args.value);
       event.reply('config-data', configManager.getAll());
+
+      // 如果更新了影响轮盘的配置，刷新缓存
+      if (['theme', 'radialStyle'].includes(args.key)) {
+        updateCachedRadialSettings();
+        if (preloadedRadialWindow && !preloadedRadialWindow.isDestroyed()) {
+          preloadedRadialWindow.webContents.send("radial-menu-preload-settings", cachedRadialInitSettings);
+        }
+      }
     }
   });
 
