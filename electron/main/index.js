@@ -313,19 +313,18 @@ async function openDirectDialog(action) {
   if (specialType) {
     console.log('[Main] Executing special action via hotkey:', action, '->', specialType);
 
-    // 获取选中内容用于搜索/翻译
-    const finalText = await captureSelectionOrClipboard();
-
     if (specialType === 'color-picker') {
-      // 取色器
+      // 取色器 - 立即执行
       setTimeout(() => {
-        // 触发取色
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send('trigger-color-picker');
         }
       }, 100);
-    } else if (specialType === 'system-action') {
-      // 系统动作
+      return;
+    } 
+    
+    if (specialType === 'system-action') {
+      // 系统动作 - 立即执行
       const { exec: execCmd } = require('child_process');
       switch (action) {
         case 'lock-screen':
@@ -353,14 +352,21 @@ async function openDirectDialog(action) {
           execCmd('ncpa.cpl');
           break;
       }
-    } else if (specialType === 'web-search' || specialType === 'web-translate') {
-      // 搜索和翻译 - 发送到主窗口处理（使用用户设置的搜索引擎/翻译服务）
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('trigger-smart-action', {
-          action: action,
-          text: finalText
-        });
-      }
+      return;
+    } 
+    
+    if (specialType === 'web-search' || specialType === 'web-translate') {
+      // 搜索和翻译 - 需要获取文本
+      // 异步获取文本，获取到后再执行
+      captureSelectionOrClipboard().then(finalText => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('trigger-smart-action', {
+            action: action,
+            text: finalText
+          });
+        }
+      });
+      return;
     }
     return;
   }
@@ -372,18 +378,19 @@ async function openDirectDialog(action) {
     return;
   }
 
-  // 获取选中内容（优先）或剪贴板内容
-  const finalText = await captureSelectionOrClipboard();
-
+  // 1. 立即打开窗口 (使用当前剪贴板内容作为临时占位，或者空)
+  const currentClipboard = clipboard.readText() || '';
+  
   // 构建弹出框数据
   const data = {
     title: config.title,
     type: config.type,
     actionType: config.actionType,
-    initialText: finalText,
-    text: finalText,
+    initialText: currentClipboard, // 先给它当前剪贴板的内容
+    text: currentClipboard,
     width: config.width,
-    height: config.height
+    height: config.height,
+    isLoading: true // 标记正在加载选中文本
   };
 
   // 使用全局函数创建弹出框
@@ -391,7 +398,27 @@ async function openDirectDialog(action) {
     global.createDialogWindow(data);
   } else {
     console.error('[Main] createDialogWindow not available yet');
+    return;
   }
+
+  // 2. 后台异步获取选中内容
+  captureSelectionOrClipboard().then(finalText => {
+    // 获取到内容后，更新弹出框
+    // 我们需要一种机制来更新已打开的 dialogWindow
+    // 这里假设 createDialogWindow 能够处理更新，或者我们发送一个新的事件
+    if (dialogWindow && !dialogWindow.isDestroyed()) {
+        // 如果获取的文本和初始文本不同，则更新
+        if (finalText !== currentClipboard) {
+            console.log('[Main] Updating dialog with captured text');
+            dialogWindow.webContents.send('dialog-update-text', {
+                text: finalText,
+                isLoading: false
+            });
+        } else {
+             dialogWindow.webContents.send('dialog-loading-done');
+        }
+    }
+  });
 }
 
 // 捕获选中内容或剪贴板内容的通用函数
@@ -441,7 +468,7 @@ async function captureSelectionOrClipboard() {
   }
 }
 
-// 核心唤醒逻辑 (被热键和鼠标中键共用) - 优化版：先捕获选中内容再显示窗口
+// 核心唤醒逻辑 (被热键和鼠标中键共用) - 优化版：先显示窗口再捕获
 async function activateApp(targetAction = null, fromHotkey = false) {
   console.log(`[ActivateApp] Called with action: ${targetAction}, fromHotkey: ${fromHotkey}`);
   if (isAppDisabled) {
@@ -471,18 +498,19 @@ async function activateApp(targetAction = null, fromHotkey = false) {
     return;
   }
 
-  console.log('[ActivateApp] Starting capture and show...');
+  console.log('[ActivateApp] Showing window immediately...');
 
-  // ========== 第一阶段：先捕获选中内容（窗口显示前） ==========
-  // 先记录活动窗口句柄（在显示我们的窗口之前）
-  lastActiveWindowHandle = systemTools.getForegroundWindow();
-  console.log('[ActivateApp] Original window handle:', lastActiveWindowHandle);
+  // ========== 第一阶段：立即显示窗口 (UI 优先) ==========
+  
+  // 1. 记录活动窗口句柄 (这个操作通常很快，但也放在 try-catch 中以防万一)
+  try {
+    lastActiveWindowHandle = systemTools.getForegroundWindow();
+    console.log('[ActivateApp] Original window handle:', lastActiveWindowHandle);
+  } catch (e) {
+    console.error('[ActivateApp] Failed to get foreground window:', e);
+  }
 
-  // 使用统一的捕获函数获取选中内容
-  const capturedText = await captureSelectionOrClipboard();
-  console.log('[ActivateApp] Captured text length:', capturedText?.length || 0);
-
-  // ========== 第二阶段：显示窗口 ==========
+  // 2. 显示窗口
   if (mainWindow && mainWindow.isMinimized()) mainWindow.restore();
 
   if (mainWindow) {
@@ -507,21 +535,33 @@ async function activateApp(targetAction = null, fromHotkey = false) {
     mainWindow.setAlwaysOnTop(true);
     mainWindow.setAlwaysOnTop(false);
     mainWindow.focus();
-
-    // ========== 第三阶段：发送数据到渲染进程 ==========
-    if (targetAction) {
-      mainWindow.webContents.send('trigger-smart-action', { action: targetAction, text: capturedText });
-    } else {
-      mainWindow.webContents.send('clipboard-data', capturedText);
-      // 异步获取前台进程名（不阻塞）
-      setImmediate(() => {
-        const foregroundProcess = systemTools.getForegroundProcessName();
-        if (mainWindow && mainWindow.webContents) {
-          mainWindow.webContents.send('foreground-process', foregroundProcess);
-        }
-      });
-    }
+    
+    // 发送一个空的或者加载中的状态，让UI先渲染出来
+    mainWindow.webContents.send('clipboard-data', '');
   }
+
+  // ========== 第二阶段：后台异步捕获选中内容 ==========
+  // 不使用 await 阻塞，而是使用 promise链 或 异步执行
+  captureSelectionOrClipboard().then(capturedText => {
+    console.log('[ActivateApp] Captured text length:', capturedText?.length || 0);
+    
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (targetAction) {
+        mainWindow.webContents.send('trigger-smart-action', { action: targetAction, text: capturedText });
+      } else {
+        mainWindow.webContents.send('clipboard-data', capturedText);
+        // 异步获取前台进程名（不阻塞）
+        setImmediate(() => {
+          const foregroundProcess = systemTools.getForegroundProcessName();
+          if (mainWindow && mainWindow.webContents) {
+            mainWindow.webContents.send('foreground-process', foregroundProcess);
+          }
+        });
+      }
+    }
+  }).catch(err => {
+    console.error('[ActivateApp] Capture failed:', err);
+  });
 }
 
 function registerGlobalShortcut(shortcut) {

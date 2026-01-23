@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using System.Threading;
+using System.Collections.Generic;
 
 class Program
 {
@@ -15,29 +16,76 @@ class Program
     private static LowLevelMouseProc _proc = HookCallback;
     private static IntPtr _hookID = IntPtr.Zero;
 
-    // 右键长按检测
+    // Output Queue
+    private static Queue<string> _outputQueue = new Queue<string>();
+    private static object _queueLock = new object();
+    private static AutoResetEvent _outputEvent = new AutoResetEvent(false);
+    private static Thread _outputThread;
+    private static volatile bool _running = true;
+
+    // Right click long press detection
     private static bool _rightButtonDown = false;
     private static DateTime _rightButtonDownTime;
     private static System.Threading.Timer _longPressTimer;
     private static bool _longPressTriggered = false;
     private static int _initialX, _initialY;
-    private static int _longPressDelay = 400; // 默认400ms，可通过参数修改
+    private static int _longPressDelay = 400;
 
     public static void Main(string[] args)
     {
-        // 解析命令行参数获取长按延时
+        // Parse arguments
         if (args.Length > 0)
         {
             int delay;
             if (int.TryParse(args[0], out delay))
             {
-                _longPressDelay = Math.Max(200, Math.Min(delay, 2000)); // 限制200-2000ms
+                _longPressDelay = Math.Max(200, Math.Min(delay, 2000));
             }
         }
 
+        // Start output thread
+        _outputThread = new Thread(OutputLoop);
+        _outputThread.IsBackground = true;
+        _outputThread.Start();
+
         _hookID = SetHook(_proc);
         Application.Run();
+        
+        _running = false;
+        _outputEvent.Set();
         UnhookWindowsHookEx(_hookID);
+    }
+
+    private static void OutputLoop()
+    {
+        while (_running)
+        {
+            _outputEvent.WaitOne();
+            while (true)
+            {
+                string msg = null;
+                lock (_queueLock)
+                {
+                    if (_outputQueue.Count > 0)
+                    {
+                        msg = _outputQueue.Dequeue();
+                    }
+                }
+
+                if (msg == null) break;
+
+                Console.WriteLine(msg);
+            }
+        }
+    }
+
+    private static void EnqueueOutput(string msg)
+    {
+        lock (_queueLock)
+        {
+            _outputQueue.Enqueue(msg);
+        }
+        _outputEvent.Set();
     }
 
     private static IntPtr SetHook(LowLevelMouseProc proc)
@@ -82,38 +130,38 @@ class Program
         if (nCode >= 0)
         {
             int msg = wParam.ToInt32();
-            MSLLHOOKSTRUCT hookStruct = (MSLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(MSLLHOOKSTRUCT));
-
-            // 中键点击
+            
+            // Middle Click
             if (msg == WM_MBUTTONDOWN)
             {
-                Console.WriteLine("MIDDLE_CLICK");
+                EnqueueOutput("MIDDLE_CLICK");
             }
-            // 右键按下
+            // Right Click Down
             else if (msg == WM_RBUTTONDOWN)
             {
+                MSLLHOOKSTRUCT hookStruct = (MSLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(MSLLHOOKSTRUCT));
                 _rightButtonDown = true;
                 _rightButtonDownTime = DateTime.Now;
                 _longPressTriggered = false;
                 _initialX = hookStruct.pt.x;
                 _initialY = hookStruct.pt.y;
 
-                // 启动长按定时器
                 DisposeTimer();
                 _longPressTimer = new System.Threading.Timer(OnLongPressTimer, null, _longPressDelay, Timeout.Infinite);
             }
-            // 右键释放
+            // Right Click Up
             else if (msg == WM_RBUTTONUP)
             {
                 DisposeTimer();
                 _rightButtonDown = false;
             }
-            // 鼠标移动 - 如果移动距离过大，取消长按检测
+            // Mouse Move
             else if (msg == WM_MOUSEMOVE && _rightButtonDown && !_longPressTriggered)
             {
+                MSLLHOOKSTRUCT hookStruct = (MSLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(MSLLHOOKSTRUCT));
                 int dx = Math.Abs(hookStruct.pt.x - _initialX);
                 int dy = Math.Abs(hookStruct.pt.y - _initialY);
-                if (dx > 10 || dy > 10) // 移动超过10像素取消长按
+                if (dx > 10 || dy > 10)
                 {
                     DisposeTimer();
                     _rightButtonDown = false;
@@ -128,8 +176,7 @@ class Program
         if (_rightButtonDown && !_longPressTriggered)
         {
             _longPressTriggered = true;
-            // 输出长按事件和坐标
-            Console.WriteLine(String.Format("RIGHT_LONG_PRESS {0} {1}", _initialX, _initialY));
+            EnqueueOutput(String.Format("RIGHT_LONG_PRESS {0} {1}", _initialX, _initialY));
         }
     }
 
